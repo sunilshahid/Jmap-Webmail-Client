@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  --color-slate-950: #000000;
+  --color-slate-900: #0a0a0a;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+  
+  :root.dark {
+    color-scheme: dark;
+  }
+
+  /* Force dark mode background and text if class is present */
+  html.dark, html.dark body {
+    background-color: #000000 !important;
+    color: #f8fafc !important;
+  }
+}
