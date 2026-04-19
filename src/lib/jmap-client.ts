@@ -50,18 +50,24 @@ export class JmapClient {
       })
     };
 
-    const res = await fetch('/api/jmap/api', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        serverUrl: this.account.serverUrl,
-        apiUrl: this.account.apiUrl,
-        username: this.account.username,
-        password: this.account.password,
-        token: this.account.token,
-        payload
-      })
-    });
+    let res: Response;
+    try {
+      res = await fetch('/api/jmap/api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serverUrl: this.account.serverUrl,
+          apiUrl: this.account.apiUrl,
+          username: this.account.username,
+          password: this.account.password,
+          token: this.account.token,
+          payload
+        })
+      });
+    } catch (e: any) {
+      console.error("JMAP Network Error:", e);
+      throw new Error(`Network failure: ${e.message}. Please check your internet connection or server availability.`);
+    }
 
     if (!res.ok) {
       const errText = await res.text();
@@ -75,6 +81,10 @@ export class JmapClient {
       throw new Error(errorMessage);
     }
     return await res.json();
+  }
+
+  request(methodCalls: any[], customCapabilities?: string[]): Promise<any> {
+    return this.call(methodCalls, customCapabilities);
   }
 
   /**
@@ -171,7 +181,7 @@ export class JmapClient {
         preview: e.preview || "No preview available",
         body: body || "No content",
         date: e.receivedAt,
-        read: !e.keywords?.["$seen"],
+        read: !!e.keywords?.["$seen"],
         starred: !!e.keywords?.["$flagged"]
       };
     });
@@ -320,22 +330,81 @@ export class JmapClient {
     }
   }
 
-  async getVacationResponse(): Promise<any> {
-    const data = await this.call([
-      ["VacationResponse/get", { accountId: this.account.accountId, ids: null }, "0"]
-    ]);
-    return data.methodResponses[0][1].list?.[0] || null;
+  async createDraft(
+    to: string[],
+    subject: string,
+    body: string,
+    cc: string[] | undefined,
+    bcc: string[] | undefined,
+    identityId: string,
+    fromEmail: string,
+    draftId: string | undefined,
+    attachments: any[] | undefined,
+    fromName?: string
+  ): Promise<string> {
+    const emailId = draftId || `draft-${Date.now()}`;
+    const mailboxes = await this.getMailboxes();
+    const draftsMailbox = mailboxes.find(mb => mb.role === 'drafts') || mailboxes[0];
+
+    if (!draftsMailbox) throw new Error('No drafts mailbox found');
+
+    const draftData: any = {
+      from: [{ ...(fromName ? { name: fromName } : {}), email: fromEmail || this.account.username }],
+      to: to.map(email => ({ email })),
+      subject,
+      keywords: { "$draft": true, "$seen": true },
+      mailboxIds: { [draftsMailbox.id]: true },
+      bodyValues: { "1": { value: body } },
+      textBody: [{ partId: "1" }],
+    };
+
+    if (cc && cc.length > 0) draftData.cc = cc.map(email => ({ email }));
+    if (bcc && bcc.length > 0) draftData.bcc = bcc.map(email => ({ email }));
+    if (attachments && attachments.length > 0) draftData.attachments = attachments;
+
+    const methodCalls: [string, Record<string, unknown>, string][] = [
+      ["Email/set", {
+        accountId: this.account.accountId,
+        [draftId ? 'update' : 'create']: {
+          [emailId]: draftData,
+        },
+      }, "0"]
+    ];
+
+    const response = await this.request(methodCalls);
+    
+    const methodResponse = response.methodResponses?.[0]?.[1];
+    if (draftId) {
+      if (methodResponse?.updated && methodResponse.updated[emailId]) return emailId;
+    } else {
+      const created = methodResponse?.created;
+      if (created && created[emailId]) {
+          return created[emailId].id;
+      }
+    }
+    throw new Error("Failed to handle draft on server");
   }
 
-  async setVacationResponse(response: any): Promise<void> {
+  async getVacationResponse(): Promise<any> {
+    const res = await this.call([
+      ["VacationResponse/get", {
+        accountId: this.account.accountId,
+        ids: null
+      }, "0"]
+    ], ["urn:ietf:params:jmap:vacationresponse"]);
+    
+    return res.methodResponses?.[0]?.[1]?.list?.[0];
+  }
+
+  async setVacationResponse(config: { isEnabled: boolean, textBody: string, subject?: string }): Promise<void> {
     await this.call([
       ["VacationResponse/set", {
         accountId: this.account.accountId,
         update: {
-          "singleton": response
+          "singleton": config
         }
       }, "0"]
-    ]);
+    ], ["urn:ietf:params:jmap:vacationresponse"]);
   }
 
   async getFilters(): Promise<any[]> {

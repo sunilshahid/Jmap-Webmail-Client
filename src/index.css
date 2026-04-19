@@ -23,3 +23,19 @@
     color: #f8fafc !important;
   }
 }
+
+@utility custom-scrollbar {
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 10px;
+  }
+  .dark &::-webkit-scrollbar-thumb {
+    background: #334155;
+  }
+}
