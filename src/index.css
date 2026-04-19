@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* ADD THIS LINE to enable class-based dark mode in Tailwind v4 */
+@variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-slate-950: #000000;
   --color-slate-900: #0a0a0a;

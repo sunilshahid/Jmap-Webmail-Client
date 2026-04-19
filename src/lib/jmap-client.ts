@@ -212,32 +212,38 @@ export class JmapClient {
     draftId?: string,
     fromName?: string
   ): Promise<void> {
-    // 1. Determine temporary email ID and find the Sent mailbox
+    // 1. Array wrapper to prevent .map() crashes
+    const toArray = Array.isArray(to) ? to : [to];
+    
     const emailId = draftId || `draft-${Date.now()}`;
     const mailboxes = await this.getMailboxes();
-    const sentMailbox = mailboxes.find(mb => mb.role === 'sent');
-    
+    const sentMailbox = mailboxes.find(mb => mb.role === 'sent') || mailboxes[0];
+
     if (!sentMailbox) {
       throw new Error('No sent mailbox found');
     }
 
-    // 2. Resolve the Identity (who the email is sent from)
+    // 2. Resolve Identity
     let finalIdentityId = identityId;
     if (!finalIdentityId) {
-      const identities = await this.getIdentities();
+      const identityResponse = await this.call([
+        ["Identity/get", { accountId: this.account.accountId }, "0"]
+      ], ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"]);
       
       finalIdentityId = this.account.accountId;
-      if (identities.length > 0) {
-        const matchingIdentity = identities.find((id) => id.email === (fromEmail || this.account.username));
-        finalIdentityId = matchingIdentity?.id || identities[0].id;
+      if (identityResponse.methodResponses?.[0]?.[0] === "Identity/get") {
+        const identities = (identityResponse.methodResponses[0][1].list || []) as { id: string; email: string }[];
+        if (identities.length > 0) {
+          const matchingIdentity = identities.find((id) => id.email === (fromEmail || this.account.username));
+          finalIdentityId = matchingIdentity?.id || identities[0].id;
+        }
       }
     }
 
     const methodCalls: any[] = [];
 
-    // 3. Handle Draft vs. New Email logic
     if (draftId) {
-      // If it's an existing draft, update its keywords and move to Sent
+      // 3a. Update an existing draft
       methodCalls.push(["Email/set", {
         accountId: this.account.accountId,
         update: {
@@ -249,21 +255,26 @@ export class JmapClient {
         },
       }, "0"]);
       
-      // Create the submission using the draftId
+      // 4a. Submit the existing draft
       methodCalls.push(["EmailSubmission/set", {
         accountId: this.account.accountId,
-        create: { "1": { emailId: draftId, identityId: finalIdentityId } },
+        create: { 
+          "1": { 
+            emailId: draftId, 
+            identityId: finalIdentityId 
+          } 
+        },
       }, "1"]);
     } else {
-      // Create a new email directly in the Sent mailbox
+      // 3b. Create a brand new email
       methodCalls.push(["Email/set", {
         accountId: this.account.accountId,
         create: {
           [emailId]: {
             from: [{ ...(fromName ? { name: fromName } : {}), email: fromEmail || this.account.username }],
-            to: to.map(email => ({ email })),
-            cc: cc?.map(email => ({ email })),
-            bcc: bcc?.map(email => ({ email })),
+            to: toArray.map((email: string) => ({ email })),
+            cc: cc ? cc.map((email: string) => ({ email })) : undefined,
+            bcc: bcc ? bcc.map((email: string) => ({ email })) : undefined,
             subject,
             keywords: { "$seen": true },
             mailboxIds: { [sentMailbox.id]: true },
@@ -273,17 +284,22 @@ export class JmapClient {
         },
       }, "0"]);
 
-      // Use a back-reference (#) to link the submission to the newly created Email ID
+      // 4b. Submit the new email using the strict Creation Reference String (THE FIX)
       methodCalls.push(["EmailSubmission/set", {
         accountId: this.account.accountId,
-        create: { "1": { emailId: `#${emailId}`, identityId: finalIdentityId } },
+        create: { 
+          "1": { 
+            identityId: finalIdentityId,
+            emailId: `#${emailId}` // String reference instead of ResultReference Object
+          } 
+        },
       }, "1"]);
     }
 
-    // 4. Send the batch request with submission capabilities
+    // 5. Fire off the request
     const response = await this.call(methodCalls, ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail", "urn:ietf:params:jmap:submission"]);
 
-    // 5. Check for errors in the method responses
+    // 6. Strict Error Handling
     if (response.methodResponses) {
       for (const [methodName, result] of response.methodResponses) {
         if (methodName.endsWith('/error')) {
@@ -292,8 +308,13 @@ export class JmapClient {
 
         if (result.notCreated || result.notUpdated) {
           const errors = result.notCreated || result.notUpdated;
-          const firstError = Object.values(errors)[0] as { description?: string; type?: string };
-          throw new Error(firstError?.description || firstError?.type || 'Failed to send email');
+          const firstError = Object.values(errors)[0] as { description?: string; type?: string; properties?: string[] };
+          
+          let errorMsg = firstError?.description || firstError?.type || 'Failed to send email';
+          if (firstError?.properties) {
+            errorMsg += ` (Rejected Properties: ${firstError.properties.join(', ')})`;
+          }
+          throw new Error(errorMsg);
         }
       }
     }

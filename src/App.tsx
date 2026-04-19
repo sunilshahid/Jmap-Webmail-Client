@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { 
   Inbox, Send, File, AlertCircle, Trash2, Menu, Search, 
   Settings, User, ChevronDown, Star, Archive, MoreVertical,
@@ -11,6 +11,7 @@ import { cn } from "./lib/utils";
 import { Toaster, toast } from 'sonner';
 import { Mailbox, Email, Identity, Contact, Event, Account } from "./lib/types";
 import { JmapClient } from "./lib/jmap-client";
+import DOMPurify from 'dompurify';
 
 const iconMap: Record<string, React.ElementType> = {
   Inbox, Send, File, AlertCircle, Trash2,
@@ -92,6 +93,9 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
   const [decryptedData, setDecryptedData] = useState<{ subject: string, body: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDecrypting, setIsDecrypting] = useState(false);
+  
+  // THE FIX: Create a mutable lock that survives re-renders
+  const autoDecryptAttempted = useRef(false);
 
   const handleDecrypt = useCallback(async () => {
     if (!password) return;
@@ -115,10 +119,12 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
   }, [id, password]);
 
   useEffect(() => {
-    if (initialKey) {
+    // THE FIX: Only fire if the key exists AND the lock hasn't been triggered
+    if (initialKey && !autoDecryptAttempted.current) {
+      autoDecryptAttempted.current = true;
       handleDecrypt();
     }
-  }, [initialKey]);
+  }, [initialKey, handleDecrypt]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#020617] flex items-center justify-center p-4">
@@ -203,6 +209,21 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
 }
 
 export default function App() {
+  // 1. Synchronous Routing State (Prevents the Login Flash)
+  const [secureRoute, setSecureRoute] = useState<{id: string, key: string | null} | null>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      if (path.startsWith('/secure/')) {
+        const id = path.split('/secure/')[1];
+        const hash = window.location.hash;
+        const key = hash.startsWith('#') ? hash.substring(1) : null;
+        return { id, key };
+      }
+    }
+    return null;
+  });
+
+  // 2. All standard App hooks MUST run before any early returns
   const [accounts, setAccounts] = useState<any[]>([]);
   const [currentAccountIndex, setCurrentAccountIndex] = useState<number>(0);
   const [isAddingAccount, setIsAddingAccount] = useState(false);
@@ -243,7 +264,6 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // Toggle dark mode class on the root element
   useEffect(() => {
     const root = window.document.documentElement;
     if (isDarkMode) {
@@ -254,7 +274,6 @@ export default function App() {
     setCookie("webmail_dark_mode", isDarkMode.toString());
   }, [isDarkMode]);
 
-  // Save encrypted accounts
   useEffect(() => {
     if (!isStorageReady) return;
     const saveAccounts = async () => {
@@ -271,6 +290,20 @@ export default function App() {
     if (!isStorageReady) return;
     localStorage.setItem("webmail_current_index", currentAccountIndex.toString());
   }, [currentAccountIndex, isStorageReady]);
+
+  // 3. THE FIX: Early return goes HERE, after ALL hooks are declared
+  if (secureRoute) {
+    return (
+      <SecurePortal 
+        id={secureRoute.id} 
+        initialKey={secureRoute.key} 
+        onBack={() => {
+          window.history.pushState({}, '', '/');
+          setSecureRoute(null);
+        }} 
+      />
+    );
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -325,6 +358,7 @@ export default function App() {
     setLoginError("");
   };
 
+  // 4. Standard App Rendering
   if (!isLoggedIn || isAddingAccount) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans transition-colors duration-200">
@@ -510,20 +544,6 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     { label: "Burn after reading", value: "burn" }
   ];
   const [searchQuery, setSearchQuery] = useState("");
-  const [secureMessageId, setSecureMessageId] = useState<string | null>(null);
-  const [secureMessageKey, setSecureMessageKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    const path = window.location.pathname;
-    const hash = window.location.hash;
-    if (path.startsWith('/secure/')) {
-      const id = path.split('/secure/')[1];
-      setSecureMessageId(id);
-      if (hash.startsWith('#')) {
-        setSecureMessageKey(hash.substring(1));
-      }
-    }
-  }, []);
   const [pullDistance, setPullDistance] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const [startY, setStartY] = useState(0);
@@ -915,7 +935,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         if (!response.ok) throw new Error("Failed to store secure message");
         const { id } = await response.json();
         
-        const secureUrl = `${window.location.origin}/secure/${id}#${password}`;
+        const secureUrl = useAutomaticKey 
+          ? `${window.location.origin}/secure/${id}#${password}` 
+          : `${window.location.origin}/secure/${id}`;
         
         const expirationText: Record<string, string> = {
           "5min": "5 minutes",
@@ -944,9 +966,12 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         emailData.toAddresses,
         finalSubject,
         finalBody,
-        undefined,
-        undefined,
-        identityId
+        undefined, // cc
+        undefined, // bcc
+        identityId, // identityId
+        identity.email, // <-- THE FIX: Pass the actual email address
+        undefined, // draftId
+        identity.name // <-- THE FIX: Pass the display name
       );
 
       toast.success("Email sent successfully!");
@@ -1360,10 +1385,6 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const handleMarkAsUnread = (emailId: string) => handleUpdateEmailKeywords(emailId, { "$seen": null });
   const handleMoveToJunk = (emailId: string) => handleMoveEmail(emailId, 'junk');
   const handleMoveToInbox = (emailId: string) => handleMoveEmail(emailId, 'inbox');
-
-  if (secureMessageId) {
-    return <SecurePortal id={secureMessageId} initialKey={secureMessageKey} onBack={() => setSecureMessageId(null)} />;
-  }
 
   return (
     <div className="flex h-screen w-full bg-slate-50 dark:bg-black text-slate-900 dark:text-slate-100 overflow-hidden font-sans transition-colors duration-200 selection:bg-indigo-100 dark:selection:bg-indigo-500/30">
@@ -2115,7 +2136,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         <div className="relative">
                           <div 
                             className="prose prose-slate dark:prose-invert max-w-none prose-p:leading-relaxed prose-a:text-indigo-600 dark:prose-a:text-indigo-400 prose-img:rounded-xl prose-img:shadow-lg bg-white dark:bg-slate-950 p-1 rounded-lg break-words overflow-x-hidden"
-                            dangerouslySetInnerHTML={{ __html: selectedEmail.body || "<em>No content</em>" }}
+                            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(selectedEmail.body || "<em>No content</em>") }}
                           />
                         </div>
                         
