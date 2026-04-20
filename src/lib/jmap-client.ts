@@ -425,6 +425,22 @@ export class JmapClient {
     ]);
   }
 
+  async updateSieveScript(scriptContent: string): Promise<void> {
+    await this.call([
+      ["SieveScript/set", {
+        accountId: this.account.accountId,
+        onSuccessDestroy: ["webmail-master-script"],
+        create: {
+          "webmail-master-script": {
+            name: "Webmail Rules",
+            content: scriptContent,
+            isActive: true
+          }
+        }
+      }, "0"]
+    ], ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:sieve"]);
+  }
+
   async getContacts(): Promise<Contact[]> {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts", "urn:ietf:params:jmap:principals"];
     const contactAccountId = "p";

@@ -539,6 +539,27 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<Date>(new Date());
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+
+  // Sieve Engine State
+  const [filterPromotions, setFilterPromotions] = useState(() => localStorage.getItem('webmail_filter_promo') === 'true');
+  const [filterSocial, setFilterSocial] = useState(() => localStorage.getItem('webmail_filter_social') === 'true');
+  const [filterUpdates, setFilterUpdates] = useState(() => localStorage.getItem('webmail_filter_updates') === 'true');
+
+  const compileAndPushSieve = async (promo: boolean, social: boolean, updates: boolean) => {
+    if (!credentials) return;
+    let script = 'require ["fileinto", "mailbox"];\n\n';
+    if (promo) script += 'if header :contains "list-unsubscribe" "" { fileinto :create "Promotions"; stop; }\n';
+    if (social) script += 'if address :domain :is "from" ["linkedin.com", "twitter.com", "facebook.com", "instagram.com"] { fileinto :create "Social"; stop; }\n';
+    if (updates) script += 'if header :contains "subject" ["receipt", "invoice", "order", "tracking"] { fileinto :create "Updates"; stop; }\n';
+    
+    try {
+      const client = new JmapClient(credentials);
+      await client.updateSieveScript(script);
+      toast.success("Mail rules updated");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to update mail rules");
+    }
+  };
   
   // Server-Side Template State
   const [serverTemplates, setServerTemplates] = useState<Email[]>([]);
@@ -1211,6 +1232,17 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     try {
       const client = new JmapClient(credentials);
       const mapped = await client.getMailboxes();
+      
+      const sortOrder = ['inbox', 'drafts', 'sent', 'templates', 'scheduled', 'outbox', 'archive', 'trash', 'junk'];
+      mapped.sort((a, b) => {
+        const indexA = sortOrder.indexOf(a.role?.toLowerCase() || '');
+        const indexB = sortOrder.indexOf(b.role?.toLowerCase() || '');
+        if (indexA === -1 && indexB === -1) return a.name.localeCompare(b.name);
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        return indexA - indexB;
+      });
+
       setMailboxes(mapped);
       if (mapped.length > 0 && !selectedMailbox) {
         setSelectedMailbox(mapped.find((m: any) => m.icon === 'Inbox')?.id || mapped[0].id);
@@ -1727,13 +1759,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed md:static inset-y-0 left-0 z-50 w-64 bg-slate-100 dark:bg-[#0f172a] border-r border-slate-200 dark:border-slate-800/50 transition-transform duration-300 ease-in-out flex flex-col",
+          "fixed md:static inset-y-0 left-0 z-50 w-[270px] bg-slate-100 dark:bg-[#050505] border-r border-slate-200 dark:border-slate-800/50 transition-transform duration-300 ease-in-out flex flex-col shrink-0",
           !isSidebarOpen ? "-translate-x-full md:translate-x-0" : "translate-x-0"
         )}
       >
         <div className="flex items-center justify-between h-16 px-4 border-b border-slate-200 dark:border-slate-800/50">
-          <div className="flex items-center gap-2 font-bold text-lg text-slate-800 dark:text-white">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-sm">
+          <div className="flex items-center gap-3 font-bold text-xl text-slate-800 dark:text-white pl-2">
+            <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center shadow-sm">
               <Mail className="w-5 h-5 text-white" />
             </div>
             <span>Webmail</span>
@@ -1747,6 +1779,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         </div>
 
         <nav className="flex-1 overflow-y-auto py-2 flex flex-col">
+          <div className="px-3 my-2 mb-4">
+            <button 
+              onClick={() => {
+                setEditingTemplateId(null);
+                setSubject('');
+                setEmailBody('');
+                setIsComposeOpen(true);
+                setIsSidebarOpen(false);
+              }}
+              className="w-full flex items-center justify-center gap-3 px-4 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-[14px] font-bold text-lg shadow-sm transition-all duration-200 active:scale-[0.98]"
+            >
+              <Edit3 className="w-5 h-5" />
+              Create
+            </button>
+          </div>
           {vacationEnabled && (
             <div className="mx-3 mb-4 p-3 bg-orange-50 dark:bg-orange-500/10 border border-orange-100 dark:border-orange-800/50 rounded-xl animate-in fade-in slide-in-from-top-2 duration-300">
               <div className="flex items-center justify-between">
@@ -1765,10 +1812,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               </div>
             </div>
           )}
-          <div className="px-4 mb-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+          <div className="px-4 mt-2 mb-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
             Folders
           </div>
-          <ul className="space-y-1 px-3 mb-6">
+          <ul className="space-y-1.5 px-3 mb-6">
             {mailboxes.map((mb) => {
               const Icon = iconMap[mb.icon] || Mail;
               const isSelected = selectedMailbox === mb.id;
@@ -1782,15 +1829,22 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         setIsSidebarOpen(false);
                       }}
                       className={cn(
-                        "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all",
+                        "w-full flex items-center justify-between px-3 py-2.5 rounded-2xl transition-all group",
                         isSelected && activeApp === 'mail'
-                          ? "bg-indigo-100 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300"
-                          : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-slate-800/50"
+                          ? "bg-indigo-100 dark:bg-[#1a1c2e] text-indigo-700 dark:text-indigo-300"
+                          : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-[#11131f]"
                       )}
                     >
-                      <div className="flex items-center gap-3">
-                        <Icon className={cn("w-4 h-4", isSelected ? "text-indigo-600 dark:text-indigo-400" : "text-slate-400 dark:text-slate-500")} />
-                        {mb.name}
+                      <div className="flex items-center gap-3.5">
+                        <div className={cn(
+                          "w-9 h-9 rounded-xl flex items-center justify-center transition-colors",
+                          isSelected && activeApp === 'mail'
+                            ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20" 
+                            : "bg-slate-200/80 dark:bg-[#11131f] text-slate-500 dark:text-slate-400 group-hover:bg-slate-300 dark:group-hover:bg-[#161827]"
+                        )}>
+                          <Icon className="w-5 h-5" />
+                        </div>
+                        <span className="text-[17px] font-bold tracking-wide">{mb.name}</span>
                       </div>
                       {mb.unread > 0 && (
                         <span className={cn(
@@ -1815,15 +1869,22 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           setIsSidebarOpen(false);
                         }}
                         className={cn(
-                          "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all mt-1",
+                          "w-full flex items-center justify-between px-3 py-2.5 rounded-2xl transition-all group mt-1.5",
                           selectedMailbox === 'virtual-scheduled' && activeApp === 'mail'
-                            ? "bg-indigo-100 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300"
-                            : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-slate-800/50"
+                            ? "bg-indigo-100 dark:bg-[#1a1c2e] text-indigo-700 dark:text-indigo-300"
+                            : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-[#11131f]"
                         )}
                       >
-                        <div className="flex items-center gap-3">
-                          <Clock className={cn("w-4 h-4", selectedMailbox === 'virtual-scheduled' ? "text-indigo-600 dark:text-indigo-400" : "text-slate-400 dark:text-slate-500")} />
-                          Scheduled
+                        <div className="flex items-center gap-3.5">
+                          <div className={cn(
+                            "w-9 h-9 rounded-xl flex items-center justify-center transition-colors",
+                            selectedMailbox === 'virtual-scheduled' && activeApp === 'mail'
+                              ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20" 
+                              : "bg-slate-200/80 dark:bg-[#161827] text-slate-500 dark:text-slate-400 group-hover:bg-slate-300 dark:group-hover:bg-[#1c1e30]"
+                          )}>
+                            <Clock className="w-5 h-5" />
+                          </div>
+                          <span className="text-[17px] font-bold tracking-wide">Scheduled</span>
                         </div>
                         {Object.keys(scheduledJobs).length > 0 && (
                           <span className={cn(
@@ -1843,10 +1904,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
             })}
           </ul>
 
-          <div className="px-4 mb-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+          <div className="px-4 mt-2 mb-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
             Apps
           </div>
-          <ul className="space-y-1 px-3">
+          <ul className="space-y-1.5 px-3">
             {[
               { id: 'mail', name: 'Mail', icon: Mail },
               { id: 'contacts', name: 'Contacts', icon: Users },
@@ -1860,13 +1921,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   <button 
                     onClick={() => { setActiveApp(app.id as any); setIsSidebarOpen(false); }}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
+                      "w-full flex items-center gap-3.5 px-3 py-2.5 rounded-2xl text-[17px] font-bold transition-all duration-200 tracking-wide",
                       isSelected 
                         ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20" 
-                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-[#11131f] hover:text-slate-900 dark:hover:text-white"
                     )}
                   >
-                    <Icon className={cn("w-4 h-4", isSelected ? "text-white" : "text-slate-400 dark:text-slate-500")} />
+                    <Icon className={cn("w-5 h-5", isSelected ? "text-white" : "text-slate-400 dark:text-slate-500")} />
                     {app.name}
                   </button>
                 </li>
@@ -2045,7 +2106,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               {/* Email List */}
               <div
                 className={cn(
-                  "w-full md:w-[350px] lg:w-[420px] border-r border-slate-200 dark:border-slate-800 flex flex-col bg-white dark:bg-black shrink-0 overflow-hidden",
+                  "w-full md:w-[350px] lg:w-[420px] border-r border-slate-200 dark:border-slate-800 flex flex-col bg-white dark:bg-[#050505] shrink-0 overflow-hidden",
                   selectedEmail ? "hidden md:flex" : "flex"
                 )}
               >
@@ -2056,7 +2117,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   onTouchEnd={handleTouchEnd}
                 >
                   {/* Sticky Header */}
-                  <div className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-black/80 backdrop-blur-md">
+                  <div className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-[#050505]/80 backdrop-blur-md">
                     {selectedEmailIds.length > 0 ? (
                       <div className="p-3 flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-200">
                         <div className="flex items-center gap-3">
@@ -2158,7 +2219,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     </div>
                   ) : filteredEmails.length === 0 ? (
                     <div className="p-12 text-center text-slate-500 dark:text-slate-400">
-                      <div className="w-16 h-16 bg-slate-50 dark:bg-slate-900 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <div className="w-16 h-16 bg-slate-50 dark:bg-[#11131f] rounded-full flex items-center justify-center mx-auto mb-4">
                         <Inbox className="w-8 h-8 text-slate-300 dark:text-slate-600" />
                       </div>
                       <p className="font-medium">{searchQuery ? "No matching messages" : "No messages found"}</p>
@@ -2186,14 +2247,14 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 "w-full text-left transition-all relative group cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500 flex gap-3",
                                 isTemplateFolder ? "p-3" : "p-4",
                                 selectedEmail?.id === email.id 
-                                  ? "bg-indigo-50/50 dark:bg-indigo-900/10" 
-                                  : "bg-white dark:bg-slate-950 hover:bg-slate-50 dark:hover:bg-slate-900/50",
-                                selectedEmailIds.includes(email.id) && "bg-indigo-50/30 dark:bg-indigo-900/5"
+                                  ? "bg-indigo-50/50 dark:bg-[#0f111c]" 
+                                  : "bg-white dark:bg-[#050505] hover:bg-slate-50 dark:hover:bg-[#11131f]",
+                                selectedEmailIds.includes(email.id) && "bg-indigo-50/30 dark:bg-[#111322]"
                               )}
                             >
                               {/* THE FIX: Gmail-Style Unread Indicator */}
                               {!email.read && (
-                                <div className="absolute left-0 top-0 bottom-0 w-[4px] bg-blue-600 dark:bg-blue-500 shadow-[0_0_8px_rgba(37,99,235,0.4)]" />
+                                <div className="absolute left-0 top-0 bottom-0 w-[4px] bg-indigo-600 dark:bg-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.6)]" />
                               )}
                               
                               <div className="pt-1 shrink-0">
@@ -2214,21 +2275,26 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-start justify-between mb-1 gap-2">
-                                  {!isTemplateFolder && (
-                                    <div className="flex flex-col min-w-0">
-                                      <span className={cn(
-                                        "text-sm truncate", 
-                                        !email.read ? "font-bold text-slate-900 dark:text-white" : "font-medium text-slate-700 dark:text-slate-300"
+                                  {!isTemplateFolder ? (
+                                    <div className="flex flex-col min-w-0 flex-1">
+                                      <div className={cn(
+                                        "flex items-center gap-2",
+                                        !email.read ? "font-bold text-slate-900 dark:text-white" : "font-semibold text-slate-700 dark:text-slate-300"
                                       )}>
-                                        {email.from.name || email.from.email.split('@')[0]}
-                                      </span>
-                                      <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                                        {email.from.email}
+                                        <span className="text-sm truncate">
+                                          {email.from.name || email.from.email.split('@')[0]}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-col min-w-0 flex-1">
+                                      <span className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                                        {email.subject || '(No Subject)'}
                                       </span>
                                     </div>
                                   )}
                                   <div className="flex items-center gap-2 ml-auto">
-                                    <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap mt-0.5">
+                                    <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap mt-0.5 font-medium">
                                       {formatDistanceToNow(new Date(email.date), { addSuffix: true })}
                                     </span>
                                     <div className="relative group/more">
@@ -2239,33 +2305,33 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                         }}
                                         className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors"
                                       >
-                                        <MoreVertical className="w-3.5 h-3.5 text-slate-400" />
+                                        <MoreVertical className="w-4 h-4 text-slate-400" />
                                       </button>
                                       {contextMenuEmail?.id === email.id && (
                                         <>
                                           <div className="fixed inset-0 z-[60]" onClick={(e) => { e.stopPropagation(); setContextMenuEmail(null); }} />
-                                          <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-[70] py-1 animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
+                                          <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-[#11131f] border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-[70] py-1 animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
                                             <button 
                                               onClick={(e) => { e.stopPropagation(); handleMarkAsRead(email.id); setContextMenuEmail(null); }}
-                                              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2 font-medium"
                                             >
                                               <Mail className="w-4 h-4" /> Mark as read
                                             </button>
                                             <button 
                                               onClick={(e) => { e.stopPropagation(); handleMarkAsUnread(email.id); setContextMenuEmail(null); }}
-                                              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2 font-medium"
                                             >
                                               <Bell className="w-4 h-4" /> Mark as unread
                                             </button>
                                             <button 
                                               onClick={(e) => { e.stopPropagation(); handleArchiveEmail(email.id); setContextMenuEmail(null); }}
-                                              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2 font-medium"
                                             >
                                               <Archive className="w-4 h-4" /> Archive
                                             </button>
                                             <button 
                                               onClick={(e) => { e.stopPropagation(); handleDeleteEmail(email.id); setContextMenuEmail(null); }}
-                                              className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 flex items-center gap-2"
+                                              className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 flex items-center gap-2 font-medium"
                                             >
                                               <Trash2 className="w-4 h-4" /> Delete
                                             </button>
@@ -2273,14 +2339,14 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                             {mailboxes.find(m => m.id === selectedMailbox)?.role === 'junk' ? (
                                               <button 
                                                 onClick={(e) => { e.stopPropagation(); handleMoveToInbox(email.id); setContextMenuEmail(null); }}
-                                                className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                                className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2 font-medium"
                                               >
                                                 <Inbox className="w-4 h-4" /> Move to Inbox
                                               </button>
                                             ) : (
                                               <button 
                                                 onClick={(e) => { e.stopPropagation(); handleMoveToJunk(email.id); setContextMenuEmail(null); }}
-                                                className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                                className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2 font-medium"
                                               >
                                                 <AlertCircle className="w-4 h-4" /> Move to Junk
                                               </button>
@@ -2291,19 +2357,24 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                     </div>
                                   </div>
                                 </div>
-                                <div className={cn(
-                                  "truncate min-w-0 flex items-center gap-2", 
-                                  isTemplateFolder ? "text-base mb-1" : "text-sm mb-1.5",
-                                  !email.read ? "font-bold text-slate-800 dark:text-slate-100" : "font-medium text-slate-600 dark:text-slate-400"
-                                )}>
-                                  {email.subject}
-                                {scheduledJobs[email.id] && (
-                                  <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800/30">
-                                    <Clock className="w-3 h-3" /> Scheduled
-                                  </span>
+                                {!isTemplateFolder && (
+                                  <div className="flex flex-col mb-1.5 mt-0.5 min-w-0">
+                                    <div className={cn(
+                                      "flex items-center gap-2", 
+                                      !email.read ? "font-bold text-slate-800 dark:text-slate-100" : "font-semibold text-slate-600 dark:text-slate-400"
+                                    )}>
+                                      <span className="text-sm truncate min-w-0">
+                                        {email.subject}
+                                      </span>
+                                      {scheduledJobs[email.id] && (
+                                        <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800/30">
+                                          <Clock className="w-3 h-3" /> Scheduled
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
                                 )}
-                              </div>
-                                <div className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed break-words">
+                                <div className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed break-words font-normal">
                                   {email.preview}
                                 </div>
                               </div>
@@ -2319,14 +2390,14 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               {/* Email Viewer */}
               <div
                 className={cn(
-                  "flex-1 flex flex-col bg-white dark:bg-slate-950 min-w-0",
+                  "flex-1 flex flex-col bg-white dark:bg-[#050505] min-w-0",
                   !selectedEmail ? "hidden md:flex" : "flex"
                 )}
               >
                 {selectedEmail ? (
                   <>
                     {/* Viewer Toolbar */}
-                    <div className="h-14 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 shrink-0 bg-white dark:bg-black">
+                    <div className="h-14 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 shrink-0 bg-white dark:bg-[#050505]">
                       <div className="flex items-center gap-1">
                         <button 
                           className="md:hidden p-2 -ml-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg mr-2 transition-colors"
@@ -2399,25 +2470,25 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           {isEmailActionsOpen && (
                             <>
                               <div className="fixed inset-0 z-40" onClick={() => setIsEmailActionsOpen(false)} />
-                              <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 py-1 animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
+                              <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-[#11131f] border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 py-1 animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
                                 {mailboxes.find(m => m.id === selectedMailbox)?.role === 'junk' ? (
                                   <button 
                                     onClick={() => { handleMoveToInbox(selectedEmail.id); setIsEmailActionsOpen(false); }}
-                                    className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                    className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2"
                                   >
                                     <Inbox className="w-4 h-4" /> Move to Inbox
                                   </button>
                                 ) : (
                                   <button 
                                     onClick={() => { handleMoveToJunk(selectedEmail.id); setIsEmailActionsOpen(false); }}
-                                    className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                    className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2"
                                   >
                                     <AlertCircle className="w-4 h-4" /> Move to Junk
                                   </button>
                                 )}
                                 <button 
                                   onClick={() => { handleArchiveEmail(selectedEmail.id); setIsEmailActionsOpen(false); }}
-                                  className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                  className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2"
                                 >
                                   <Archive className="w-4 h-4" /> Archive
                                 </button>
@@ -2435,14 +2506,16 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     </div>
 
                     {/* Viewer Content */}
-                    <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-8 bg-white dark:bg-black">
+                    <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 md:p-12 lg:p-16 bg-white dark:bg-[#050505]">
                       <div className="max-w-4xl mx-auto min-w-0">
                         <div className="flex items-start justify-between mb-6 group min-w-0">
                           <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white leading-tight break-all md:break-words flex-1 min-w-0">
                             {selectedEmail.subject}
                           </h1>
-                          <div className="flex items-center gap-2 ml-4 shrink-0">
-                            <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[10px] font-bold rounded uppercase tracking-wider">Inbox</span>
+                          <div className="flex items-center gap-2 ml-4 shrink-0 mt-1">
+                            <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[10px] font-bold rounded uppercase tracking-wider">
+                              {mailboxes.find(m => m.id === selectedMailbox)?.name || "Message"}
+                            </span>
                             <button className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
                               <Star className={cn("w-4 h-4", selectedEmail.starred && "fill-yellow-400 text-yellow-400")} />
                             </button>
@@ -2451,7 +2524,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
                         {/* THE FIX: Strict ID checking to prevent banner bleeding */}
                         {selectedEmail && selectedEmail.id && scheduledJobs[selectedEmail.id] !== undefined && (
-                          <div className="mb-6 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-slate-100 dark:border-slate-700/50 animate-in fade-in slide-in-from-top-2 duration-300">
+                          <div className="mb-6 p-4 bg-slate-50 dark:bg-[#11131f] rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-slate-100 dark:border-slate-800/50 animate-in fade-in slide-in-from-top-2 duration-300">
                             <div className="flex items-start sm:items-center gap-3">
                               <div className="mt-0.5 sm:mt-0 text-slate-500 dark:text-slate-400">
                                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2517,7 +2590,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               </div>
 
                               {isHeaderExpanded && (
-                                <div className="mt-3 p-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 text-xs space-y-2 animate-in fade-in slide-in-from-top-2 duration-200 shadow-inner overflow-hidden">
+                                <div className="mt-3 p-3 bg-slate-50 dark:bg-[#11131f] rounded-xl border border-slate-200 dark:border-slate-800 text-xs space-y-2 animate-in fade-in slide-in-from-top-2 duration-200 shadow-inner overflow-hidden">
                                   <div className="grid grid-cols-[60px_minmax(0,1fr)] gap-2">
                                     <span className="text-slate-400 dark:text-slate-500">from:</span>
                                     <span className="text-slate-700 dark:text-slate-300 break-all font-medium">
@@ -2555,7 +2628,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
                         <div className="relative">
                           <div 
-                            className="prose prose-slate dark:prose-invert max-w-none prose-p:leading-relaxed prose-a:text-indigo-600 dark:prose-a:text-indigo-400 prose-img:rounded-xl prose-img:shadow-lg bg-white dark:bg-slate-950 p-1 rounded-lg break-words overflow-x-hidden"
+                            className="prose prose-slate dark:prose-invert max-w-none prose-p:leading-relaxed prose-a:text-indigo-600 dark:prose-a:text-indigo-400 prose-img:rounded-xl prose-img:shadow-lg rounded-lg break-words overflow-x-hidden"
                             dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(selectedEmail.body || "<em>No content</em>") }}
                           />
                         </div>
@@ -2571,7 +2644,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 setIsComposeOpen(true);
                               }
                             }}
-                            className="flex items-center gap-2 px-6 py-2 rounded-full border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900 transition-all font-medium text-sm"
+                            className="flex items-center gap-2 px-6 py-2 rounded-full border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all font-medium text-sm shadow-sm"
                           >
                             <Reply className="w-4 h-4" /> Reply
                           </button>
@@ -2585,7 +2658,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 setIsComposeOpen(true);
                               }
                             }}
-                            className="flex items-center gap-2 px-6 py-2 rounded-full border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900 transition-all font-medium text-sm"
+                            className="flex items-center gap-2 px-6 py-2 rounded-full border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all font-medium text-sm shadow-sm"
                           >
                             <Forward className="w-4 h-4" /> Forward
                           </button>
@@ -2594,8 +2667,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     </div>
                   </>
                 ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500">
-                    <div className="w-20 h-20 bg-slate-50 dark:bg-slate-900 rounded-full flex items-center justify-center mb-6">
+                  <div className="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 bg-white dark:bg-[#050505]">
+                    <div className="w-20 h-20 bg-slate-50 dark:bg-[#11131f] rounded-full flex items-center justify-center mb-6">
                       <Mail className="w-10 h-10 text-slate-300 dark:text-slate-600" />
                     </div>
                     <p className="text-lg font-medium text-slate-500 dark:text-slate-400">Select a message to read</p>
@@ -2640,7 +2713,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   {filteredContacts.length > 0 ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                       {filteredContacts.map((contact, idx) => (
-                        <div key={idx} className="group bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-indigo-500/30 transition-all cursor-pointer">
+                        <div key={idx} className="group bg-white dark:bg-[#11131f] p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-indigo-500/30 transition-all cursor-pointer">
                           <div className="flex items-center gap-4">
                             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-xl shrink-0 shadow-inner">
                               {getContactName(contact).charAt(0).toUpperCase()}
@@ -2665,8 +2738,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       ))}
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center justify-center py-20 text-slate-400 dark:text-slate-600 text-center">
-                      <div className="w-24 h-24 bg-white dark:bg-slate-900 rounded-3xl flex items-center justify-center mb-6 shadow-xl border border-slate-100 dark:border-slate-800">
+                    <div className="flex flex-col items-center justify-center py-20 text-slate-400 dark:text-slate-600 text-center bg-white dark:bg-[#11131f] rounded-xl border border-slate-200 dark:border-slate-800">
+                      <div className="w-24 h-24 bg-slate-50 dark:bg-[#050505] rounded-3xl flex items-center justify-center mb-6 shadow-xl border border-slate-100 dark:border-slate-800">
                         <Users className="w-10 h-10 text-slate-300 dark:text-slate-700" />
                       </div>
                       <p className="text-xl font-bold text-slate-900 dark:text-white">No Contacts Found</p>
@@ -2693,7 +2766,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     <p className="text-sm text-slate-500 dark:text-slate-400">{format(new Date(), 'MMMM yyyy')}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button className="px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
+                    <button className="px-4 py-2 bg-white dark:bg-[#11131f] border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
                       Today
                     </button>
                     <button 
@@ -2706,7 +2779,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 </div>
                 <div className="p-6">
                   {/* Mock Calendar Grid */}
-                  <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+                  <div className="bg-white dark:bg-[#050505] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
                     <div className="grid grid-cols-7 border-b border-slate-200 dark:border-slate-800">
                       {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
                         <div key={day} className="p-3 text-center text-xs font-bold text-slate-400 uppercase tracking-wider border-r border-slate-100 dark:border-slate-800 last:border-0">
@@ -2734,8 +2807,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
                           return (
                             <div key={i} className={cn(
-                              "min-h-[120px] p-2 border-r border-b border-slate-100 dark:border-slate-800 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer group",
-                              !isCurrentMonth && "bg-slate-50/50 dark:bg-slate-900/50"
+                              "min-h-[120px] p-2 border-r border-b border-slate-100 dark:border-slate-800 transition-colors hover:bg-slate-50 dark:hover:bg-[#11131f] cursor-pointer group",
+                              !isCurrentMonth && "bg-slate-50/50 dark:bg-black"
                             )}>
                               <div className="flex justify-between items-start">
                                 <span className={cn(
@@ -2768,9 +2841,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Your Calendars</h2>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                       {calendars.map((calendar, idx) => (
-                        <div key={idx} className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between group hover:border-indigo-500/30 transition-all">
+                        <div key={idx} className="bg-white dark:bg-[#11131f] p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between group hover:border-indigo-500/30 transition-all">
                           <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 flex items-center justify-center shrink-0">
+                            <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-[#050505] text-indigo-700 dark:text-indigo-400 flex items-center justify-center shrink-0">
                               <Calendar className="w-5 h-5" />
                             </div>
                             <h3 className="font-semibold text-slate-900 dark:text-white">{calendar.name || "Calendar"}</h3>
@@ -2991,8 +3064,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <h2 className="text-xl font-bold text-slate-900 dark:text-white">Appearance</h2>
                         </div>
 
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="flex-1 min-w-0">
+                        <div className="flex flex-row items-center justify-between gap-4">
+                          <div className="flex-1 min-w-0 pr-4">
                             <div className="font-bold text-slate-900 dark:text-white text-lg">Dark Mode</div>
                             <div className="text-sm text-slate-500 dark:text-slate-400">Toggle dark theme across the app</div>
                           </div>
@@ -3065,8 +3138,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         </div>
 
                         <div className="space-y-8">
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="flex-1 min-w-0">
+                          <div className="flex flex-row items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0 pr-4">
                               <div className="font-bold text-slate-900 dark:text-white text-lg">Desktop Notifications</div>
                               <div className="text-sm text-slate-500 dark:text-slate-400">Show notifications for new emails</div>
                             </div>
@@ -3110,8 +3183,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             </button>
                           </div>
 
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="flex-1 min-w-0">
+                          <div className="flex flex-row items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0 pr-4">
                               <div className="font-bold text-slate-900 dark:text-white text-lg">Sound Effects</div>
                               <div className="text-sm text-slate-500 dark:text-slate-400">Play sound when a new message arrives</div>
                             </div>
@@ -3152,10 +3225,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         <h2 className="text-xl font-bold text-slate-900 dark:text-white">Auto-Responder</h2>
                       </div>
                       
-                      <div className="flex items-center justify-between mb-8 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="font-bold text-slate-900 dark:text-white">Enable Auto-Reply</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">Automatically reply to incoming emails</div>
+                      <div className="flex flex-row items-center justify-between mb-8 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl gap-4">
+                        <div className="flex-1 min-w-0 pr-4">
+                          <div className="font-bold text-slate-900 dark:text-white text-lg">Enable Auto-Reply</div>
+                          <div className="text-sm text-slate-500 dark:text-slate-400">Automatically reply to incoming emails</div>
                         </div>
                         <button 
                           onClick={() => setVacationEnabled(!vacationEnabled)}
@@ -3318,16 +3391,22 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
                         <div className="space-y-4">
                           {[
-                            { id: 'promotions', label: 'Promotions', description: 'Marketing, newsletters, and promotional emails', active: true },
-                            { id: 'social', label: 'Social', description: 'Notifications from social networks and media sites', active: true },
-                            { id: 'updates', label: 'Updates', description: 'Transactional emails, receipts, and confirmations', active: false },
+                            { id: 'promotions', label: 'Promotions', description: 'Marketing, newsletters, and promotional emails', active: filterPromotions },
+                            { id: 'social', label: 'Social', description: 'Notifications from social networks and media sites', active: filterSocial },
+                            { id: 'updates', label: 'Updates', description: 'Transactional emails, receipts, and confirmations', active: filterUpdates },
                           ].map((cat) => (
-                            <div key={cat.id} className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 transition-colors gap-4">
-                              <div className="flex-1 min-w-0">
-                                <div className="font-bold text-slate-900 dark:text-white">{cat.label}</div>
-                                <div className="text-xs text-slate-500 dark:text-slate-400">{cat.description}</div>
+                            <div key={cat.id} className="flex flex-row items-center justify-between p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 transition-colors gap-4">
+                              <div className="flex-1 min-w-0 pr-4">
+                                <div className="font-bold text-slate-900 dark:text-white text-lg">{cat.label}</div>
+                                <div className="text-sm text-slate-500 dark:text-slate-400">{cat.description}</div>
                               </div>
                               <button 
+                                onClick={() => {
+                                  const newState = !cat.active;
+                                  if (cat.id === 'promotions') { setFilterPromotions(newState); localStorage.setItem('webmail_filter_promo', newState.toString()); compileAndPushSieve(newState, filterSocial, filterUpdates); }
+                                  if (cat.id === 'social') { setFilterSocial(newState); localStorage.setItem('webmail_filter_social', newState.toString()); compileAndPushSieve(filterPromotions, newState, filterUpdates); }
+                                  if (cat.id === 'updates') { setFilterUpdates(newState); localStorage.setItem('webmail_filter_updates', newState.toString()); compileAndPushSieve(filterPromotions, filterSocial, newState); }
+                                }}
                                 className={cn(
                                   "relative inline-flex h-8 w-14 items-center rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 shrink-0",
                                   cat.active ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-800"
@@ -3340,7 +3419,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         </div>
                       </div>
 
-                      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden relative">
+                      <div className="bg-white dark:bg-[#050505] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden relative">
                         <div className="flex items-center gap-3 mb-6">
                           <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
                             <Filter className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
@@ -3351,8 +3430,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           </div>
                         </div>
 
-                        <div className="py-12 flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-3xl bg-slate-50/50 dark:bg-slate-950/30">
-                          <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center mb-4 text-slate-400">
+                        <div className="py-12 flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-3xl bg-slate-50/50 dark:bg-black">
+                          <div className="w-16 h-16 bg-slate-100 dark:bg-[#11131f] rounded-2xl flex items-center justify-center mb-4 text-slate-400">
                             <Filter className="w-8 h-8" />
                           </div>
                           <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">No custom rules active</h3>
@@ -3369,7 +3448,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
                   {isSettingsSection === 'advanced' && (
                     <div className="grid gap-6">
-                      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                      <div className="bg-white dark:bg-[#050505] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
                         <div className="flex items-center gap-3 mb-6">
                           <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
                             <Key className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
@@ -3422,10 +3501,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 setIsComposeOpen(true);
               }}
               className={cn(
-                "fixed bottom-6 right-4 z-40 bg-indigo-600 hover:bg-indigo-700 text-white shadow-xl flex items-center justify-center transition-all active:scale-90 group overflow-hidden",
+                "fixed bottom-6 right-4 z-40 bg-indigo-600 hover:bg-indigo-700 text-white shadow-xl flex items-center justify-center transition-all active:scale-90 group overflow-hidden md:hidden",
                 mailboxes.find(m => m.id === selectedMailbox)?.name.toLowerCase() === 'templates'
-                  ? "px-6 py-3.5 rounded-2xl md:right-8 md:bottom-8" 
-                  : "p-3.5 rounded-full md:absolute md:right-6 md:bottom-6"
+                  ? "px-6 py-3.5 rounded-2xl" 
+                  : "p-3.5 rounded-full"
               )}
               title={mailboxes.find(m => m.id === selectedMailbox)?.name.toLowerCase() === 'templates' ? "Create a template" : "Compose"}
             >
@@ -3502,7 +3581,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   if (isTemplateFolder) {
                     return editingTemplateId ? "Edit Template" : "New Template";
                   }
-                  return "New Message";
+                  return "Create";
                 })()}
               </span>
               <button 
@@ -3530,6 +3609,16 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 
                 return (
                   <>
+                    {/* The Template Subject Input moved to top */}
+                    {isTemplateFolder && (
+                      <input 
+                        type="text" 
+                        placeholder="Template Subject" 
+                        value={subject}
+                        onChange={(e) => setSubject(e.target.value)}
+                        className="w-full border-b border-slate-200 dark:border-slate-800 pb-3 bg-transparent focus:border-indigo-500 dark:focus:border-indigo-500 outline-none transition-colors font-bold text-slate-900 dark:text-white shrink-0 mb-2"
+                      />
+                    )}
                     {!isTemplateFolder && (
                       <>
                         {/* Tab Toggle */}
@@ -3560,7 +3649,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <div className="flex-1 relative min-w-0">
                             <div 
                               onClick={() => setIsIdentityDropdownOpen(!isIdentityDropdownOpen)}
-                              className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700/50 hover:border-indigo-500/50 transition-all cursor-pointer min-w-0 shadow-sm"
+                              className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800/20 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-indigo-500/50 transition-all cursor-pointer min-w-0 shadow-sm"
                             >
                               <div className={cn(
                                 "w-8 h-8 rounded-full flex items-center justify-center text-xs text-white font-bold shadow-sm shrink-0",
@@ -3717,13 +3806,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       </>
                     )}
 
-                    <input 
-                      type="text" 
-                      placeholder="Subject" 
-                      value={subject}
-                      onChange={(e) => setSubject(e.target.value)}
-                      className="w-full border-b border-slate-200 dark:border-slate-800 pb-3 bg-transparent focus:border-indigo-500 dark:focus:border-indigo-500 outline-none transition-colors font-bold text-slate-900 dark:text-white shrink-0"
-                    />
+                    {!isTemplateFolder && (
+                      <input 
+                        type="text" 
+                        placeholder="Subject" 
+                        value={subject}
+                        onChange={(e) => setSubject(e.target.value)}
+                        className="w-full border-b border-slate-200 dark:border-slate-800 pb-3 bg-transparent focus:border-indigo-500 dark:focus:border-indigo-500 outline-none transition-colors font-bold text-slate-900 dark:text-white shrink-0"
+                      />
+                    )}
 
                     {isSecureMessage && !isTemplateFolder ? (
                       <div className="bg-indigo-50/50 dark:bg-indigo-500/5 border border-indigo-100 dark:border-indigo-500/20 rounded-2xl p-5 mt-2 animate-in fade-in slide-in-from-top-4 duration-300">
@@ -3806,7 +3897,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 );
               })()}
             </div>
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-4 bg-slate-50 dark:bg-black sm:rounded-b-2xl shrink-0">
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-4 bg-slate-50 dark:bg-[#050505] sm:rounded-b-2xl shrink-0">
               {(() => {
                 const folder = mailboxes.find(m => m.id === selectedMailbox);
                 const isTemplateFolder = folder?.role === 'templates' || folder?.name.toLowerCase() === 'templates';
