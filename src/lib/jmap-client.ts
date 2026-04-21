@@ -724,39 +724,20 @@ export class JmapClient {
   }
 
   async deleteContact(contactId: string): Promise<void> {
-    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
-    const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
-    
-    const response = await this.call([
-      ["ContactCard/set", {
-        accountId: contactAccountId,
-        destroy: [contactId]
-      }, "0"]
-    ], caps);
-
-    const result = response.methodResponses?.[0]?.[1];
-    if (result?.notDestroyed?.[contactId]) {
-      const error = result.notDestroyed[contactId];
-      throw new Error(error.description || `Failed to delete contact: ${error.type}`);
-    }
+    await this.deleteContacts([contactId]);
   }
 
   async deleteContacts(contactIds: string[]): Promise<void> {
+    if (!contactIds || contactIds.length === 0) return;
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
     const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
     
-    const response = await this.call([
+    await this.request([
       ["ContactCard/set", {
         accountId: contactAccountId,
         destroy: contactIds
       }, "0"]
     ], caps);
-
-    const result = response.methodResponses?.[0]?.[1];
-    if (result?.notDestroyed && Object.keys(result.notDestroyed).length > 0) {
-      const firstError = Object.values(result.notDestroyed)[0] as any;
-      throw new Error(firstError.description || `Failed to delete some contacts: ${firstError.type}`);
-    }
   }
 
   async importContacts(vcardData: string): Promise<number> {
@@ -880,29 +861,36 @@ export class JmapClient {
     const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
     
     // Get calendar ID first if not provided
-    let calendarId = event.calendarId;
-    if (!calendarId) {
-      const calendars = await this.getCalendars();
-      if (calendars.length > 0) {
-        calendarId = calendars[0].id;
+    let calendarIds = event.calendarIds;
+    if (!calendarIds) {
+      let calendarId = event.calendarId;
+      if (!calendarId) {
+        const calendars = await this.getCalendars();
+        if (calendars.length > 0) {
+          calendarId = calendars[0].id;
+        }
+      }
+      if (calendarId) {
+        calendarIds = { [calendarId]: true };
       }
     }
 
-    if (!calendarId) {
+    if (!calendarIds || Object.keys(calendarIds).length === 0) {
       throw new Error("No calendar found to add event to");
     }
 
     const eventPayload = {
       "@type": "Event",
-      uid: Math.random().toString(36).substring(2) + Date.now(),
+      uid: event.uid || (Math.random().toString(36).substring(2) + Date.now()),
       created: new Date().toISOString(),
-      calendarIds: { [calendarId]: true },
+      calendarIds: calendarIds,
       title: event.title,
       description: event.description,
       start: event.start,
       duration: event.duration || "PT1H",
       timeZone: event.timeZone || "UTC",
-      location: event.location
+      location: event.location,
+      priority: 0
     };
 
     const response = await this.call([
@@ -945,17 +933,11 @@ export class JmapClient {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
     const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
     
-    const response = await this.call([
+    await this.request([
       ["CalendarEvent/set", {
         accountId: calendarAccountId,
         destroy: [eventId]
       }, "0"]
     ], caps);
-
-    const result = response.methodResponses?.[0]?.[1];
-    if (result?.notDestroyed?.[eventId]) {
-      const error = result.notDestroyed[eventId];
-      throw new Error(error.description || `Failed to delete event: ${error.type}`);
-    }
   }
 }

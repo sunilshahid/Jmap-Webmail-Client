@@ -1225,7 +1225,6 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validation
     const errors: Record<string, string> = {};
     if (!newEvent.title.trim()) errors.title = "Event title is missing";
     
@@ -1240,15 +1239,29 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       if (!credentials) throw new Error("Not logged in");
       const client = new JmapClient(credentials);
       
-      // Get the first calendar ID if not specified
-      const calendarId = calendars[0]?.id || "personal";
+      // FIXED: Fallback strictly to 'b' which is Stalwart's default
+      const calendarId = calendars[0]?.id || "b"; 
+
+      // FIXED: Generate mandatory UID
+      const uid = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : `event-${Date.now()}`;
+
+      // FIXED: Calculate ISO 8601 Duration (e.g. "PT1H")
+      const startObj = new Date(`${newEvent.startDate}T${newEvent.startTime}`);
+      const endObj = new Date(`${newEvent.endDate}T${newEvent.endTime}`);
+      let diffMins = Math.floor((endObj.getTime() - startObj.getTime()) / 60000);
+      if (diffMins <= 0) diffMins = 60; // Default 1 hr
+      const hours = Math.floor(diffMins / 60);
+      const mins = diffMins % 60;
+      const durationStr = `PT${hours > 0 ? hours + 'H' : ''}${mins > 0 ? mins + 'M' : ''}`;
 
       const createdEvent = await client.createEvent({
-        calendarId,
+        calendarIds: { [calendarId]: true }, // FIXED: Flattened map structure
+        uid: uid,                            // FIXED: Mandatory UID
         title: newEvent.title,
         description: newEvent.description,
         start: `${newEvent.startDate}T${newEvent.startTime}:00`,
-        timeZone: newEvent.timeZone
+        timeZone: newEvent.timeZone,
+        duration: durationStr                // FIXED: Mandatory duration
       });
 
       setEvents(prev => [...prev, createdEvent]);
@@ -1858,6 +1871,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       const client = new JmapClient(credentials);
       const startOfMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1).toISOString();
       const endOfMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 0).toISOString();
+
+      // FIXED: Actually fetch the calendars to populate the sidebar/modals
+      client.getCalendars()
+        .then(list => setCalendars(list))
+        .catch(err => console.error("Calendar retrieval failed", err));
 
       client.getEvents(startOfMonth, endOfMonth)
         .then(list => setEvents(list))
