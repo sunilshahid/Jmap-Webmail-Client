@@ -273,6 +273,136 @@ async function startServer() {
     }
   });
 
+  // JMAP Upload Proxy
+  app.post("/api/jmap/upload", express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
+    const serverUrl = req.headers['x-jmap-server-url'] as string;
+    const uploadUrl = req.headers['x-jmap-upload-url'] as string;
+    const username = req.headers['x-jmap-username'] as string;
+    const password = req.headers['x-jmap-password'] as string;
+    const contentType = req.headers['content-type'] || 'application/octet-stream';
+
+    if (!serverUrl || !uploadUrl || !username || !password) {
+      return res.status(400).json({ error: "Missing JMAP proxy headers" });
+    }
+
+    try {
+      const auth = Buffer.from(`${username}:${password}`).toString('base64');
+      
+      let baseServerUrl = serverUrl.trim();
+      if (!baseServerUrl.startsWith('http')) {
+        baseServerUrl = `https://${baseServerUrl}`;
+      }
+
+      let finalUploadUrl = uploadUrl;
+      if (uploadUrl.startsWith('/')) {
+        try {
+          const urlObj = new URL(baseServerUrl);
+          const protocol = urlObj.protocol === 'http:' ? 'https:' : urlObj.protocol;
+          finalUploadUrl = `${protocol}//${urlObj.host}${uploadUrl}`;
+        } catch (e) {
+          finalUploadUrl = `${baseServerUrl.replace(/\/$/, '')}/${uploadUrl.replace(/^\//, '')}`;
+        }
+      } else if (!uploadUrl.startsWith('http')) {
+        finalUploadUrl = `${baseServerUrl.replace(/\/$/, '')}/${uploadUrl.replace(/^\//, '')}`;
+      }
+
+      // STRICT HTTPS UPGRADE
+      if (finalUploadUrl.includes(':443') && finalUploadUrl.startsWith('http://')) {
+        finalUploadUrl = finalUploadUrl.replace(/^http:\/\//i, 'https://');
+      } else if (finalUploadUrl.includes('sunilshahid.com') && finalUploadUrl.startsWith('http://')) {
+        finalUploadUrl = finalUploadUrl.replace(/^http:\/\//i, 'https://');
+      }
+
+      console.log(`JMAP Upload Proxy: ${finalUploadUrl}`);
+
+      const response = await fetch(finalUploadUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': contentType as string
+        },
+        body: req.body
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error(`JMAP Upload failed - URL: ${finalUploadUrl}, Status: ${response.status}, Error: ${text}`);
+        throw new Error(`Upload failed with status ${response.status}: ${text}`);
+      }
+
+      const data = await response.json();
+      res.json(data);
+    } catch (e: any) {
+      console.error("JMAP Upload Error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // JMAP Download Proxy
+  app.get("/api/jmap/download", async (req, res) => {
+    const serverUrl = req.headers['x-jmap-server-url'] as string;
+    const downloadUrl = req.headers['x-jmap-download-url'] as string;
+    const username = req.headers['x-jmap-username'] as string;
+    const password = req.headers['x-jmap-password'] as string;
+
+    if (!serverUrl || !downloadUrl || !username || !password) {
+      return res.status(400).json({ error: "Missing JMAP proxy headers" });
+    }
+
+    try {
+      const auth = Buffer.from(`${username}:${password}`).toString('base64');
+      
+      let baseServerUrl = serverUrl.trim();
+      if (!baseServerUrl.startsWith('http')) {
+        baseServerUrl = `https://${baseServerUrl}`;
+      }
+
+      let finalDownloadUrl = downloadUrl;
+      if (downloadUrl.startsWith('/')) {
+        try {
+          const urlObj = new URL(baseServerUrl);
+          const protocol = urlObj.protocol === 'http:' ? 'https:' : urlObj.protocol;
+          finalDownloadUrl = `${protocol}//${urlObj.host}${downloadUrl}`;
+        } catch (e) {
+          finalDownloadUrl = `${baseServerUrl.replace(/\/$/, '')}/${downloadUrl.replace(/^\//, '')}`;
+        }
+      } else if (!downloadUrl.startsWith('http')) {
+        finalDownloadUrl = `${baseServerUrl.replace(/\/$/, '')}/${downloadUrl.replace(/^\//, '')}`;
+      }
+
+      // STRICT HTTPS UPGRADE
+      if (finalDownloadUrl.includes(':443') && finalDownloadUrl.startsWith('http://')) {
+        finalDownloadUrl = finalDownloadUrl.replace(/^http:\/\//i, 'https://');
+      } else if (finalDownloadUrl.includes('sunilshahid.com') && finalDownloadUrl.startsWith('http://')) {
+        finalDownloadUrl = finalDownloadUrl.replace(/^http:\/\//i, 'https://');
+      }
+
+      console.log(`JMAP Download Proxy: ${finalDownloadUrl}`);
+
+      const response = await fetch(finalDownloadUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${auth}`
+        }
+      });
+
+      if (!response.ok) {
+        console.error(`JMAP Download failed - URL: ${finalDownloadUrl}, Status: ${response.status}`);
+        const text = await response.text();
+        return res.status(response.status).send(text);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (contentType) res.setHeader('content-type', contentType);
+      
+      const buffer = await response.arrayBuffer();
+      res.send(Buffer.from(buffer));
+    } catch (e: any) {
+      console.error("JMAP Download Error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

@@ -2,6 +2,7 @@ export type Mailbox = {
   id: string;
   name: string;
   unread: number;
+  totalEmails?: number;
   icon: string;
   role?: string;
 };
@@ -17,6 +18,9 @@ export type Email = {
   date: string;
   read: boolean;
   starred: boolean;
+  unsubscribeUrl?: string;
+  headers?: { name: string; value: string }[];
+  attachments?: any[];
 };
 
 export type Identity = {
@@ -31,22 +35,29 @@ export type Identity = {
 
 export type Contact = {
   id: string;
-  name?: any;
-  email?: string;
-  emails?: any;
-  phone?: string;
-  phones?: any;
-  company?: string;
-  organizations?: any;
+  fullName?: string;
+  notes?: string;
+  emails?: Record<string, { address: string; contexts?: Record<string, boolean> }>;
+  phones?: Record<string, { number: string; contexts?: Record<string, boolean> }>;
+  organizations?: Record<string, { name: string; contexts?: Record<string, boolean> }>;
+};
+
+export type Calendar = {
+  id: string;
+  name: string;
+  color?: string;
 };
 
 export type Event = {
   id: string;
-  title?: string;
+  "@type": "Event";
+  title: string;
   description?: string;
-  start?: string;
-  end?: string;
+  start: string;
+  duration?: string;
+  timeZone?: string;
   location?: string;
+  calendarId: string;
 };
 
 export type Account = {
@@ -56,6 +67,8 @@ export type Account = {
   token?: string;
   apiUrl: string;
   accountId: string;
+  uploadUrl?: string;
+  downloadUrl?: string;
   primaryAccounts: Record<string, string>;
   capabilities: string[];
 };

@@ -1,4 +1,4 @@
-import { Account, Mailbox, Email, Identity, Contact, Event } from './types';
+import { Account, Mailbox, Email, Identity, Contact, Event, Calendar } from './types';
 
 export class JmapClient {
   private account: Account;
@@ -34,6 +34,8 @@ export class JmapClient {
     // Ensure required capabilities are always present
     const requiredCaps = [
       "urn:ietf:params:jmap:core",
+      "urn:ietf:params:jmap:mail",
+      "urn:ietf:params:jmap:submission",
       "urn:ietf:params:jmap:contacts",
       "urn:ietf:params:jmap:calendars"
     ];
@@ -41,13 +43,7 @@ export class JmapClient {
 
     const payload = {
       using: usingCaps,
-      methodCalls: methodCalls.map(call => {
-        if (call[1] && call[1].accountId) {
-          // Default to 'p' if not otherwise specified, as per Stalwart conventions
-          call[1].accountId = call[1].accountId === "p" ? "p" : this.account.accountId;
-        }
-        return call;
-      })
+      methodCalls: methodCalls
     };
 
     let res: Response;
@@ -117,22 +113,135 @@ export class JmapClient {
     const session = await res.json();
 
     const apiUrl = session.apiUrl;
-    const accountId = "p"; // Based on Stalwart session object
-    const primaryAccounts = session.primaryAccounts;
-    const capabilities = Object.keys(session.capabilities || {});
+    const primaryAccounts = session.primaryAccounts || {};
+    const accountsInfo = session.accounts || {};
     
-    return { serverUrl, username, password, token, apiUrl, accountId, primaryAccounts, capabilities };
+    // We will use standard JMAP capability routing 
+    const accountId = primaryAccounts["urn:ietf:params:jmap:mail"] || Object.keys(accountsInfo)[0] || "p";
+    const capabilities = Object.keys(session.capabilities || {});
+    const uploadUrl = session.uploadUrl;
+    const downloadUrl = session.downloadUrl;
+    
+    return { serverUrl, username, password, token, apiUrl, accountId, uploadUrl, downloadUrl, primaryAccounts, capabilities };
+  }
+
+  async uploadBlob(file: File, accountId: string): Promise<{ accountId: string, blobId: string, type: string, size: number }> {
+    if (!this.account.uploadUrl && this.account.password) {
+      try {
+        console.warn("Upload URL missing, attempting session refresh...");
+        const refreshed = await JmapClient.createSession(this.account.serverUrl, this.account.username, this.account.password);
+        this.account.uploadUrl = refreshed.uploadUrl;
+        this.account.downloadUrl = refreshed.downloadUrl;
+        // Also update other potential missing fields
+        this.account.apiUrl = refreshed.apiUrl;
+        this.account.accountId = refreshed.accountId;
+      } catch (e) {
+        console.error("Failed to auto-refresh session for upload", e);
+      }
+    }
+
+    if (!this.account.uploadUrl) throw new Error("Upload URL not available for this session. Please log out and log in again.");
+    
+    const uploadUrl = this.account.uploadUrl.replace('{accountId}', accountId);
+    
+    console.log(`Uploading via proxy to JMAP server...`);
+    
+    const response = await fetch('/api/jmap/upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': file.type || 'application/octet-stream',
+        'X-JMAP-Server-Url': this.account.serverUrl,
+        'X-JMAP-Upload-Url': uploadUrl,
+        'X-JMAP-Username': this.account.username,
+        'X-JMAP-Password': this.account.password || '',
+      },
+      body: file
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Upload failed (${response.status}): ${errText || response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  async getAttachmentBlob(blobId: string, name: string, type: string): Promise<Blob> {
+    if (!this.account.downloadUrl && this.account.password) {
+        try {
+          const refreshed = await JmapClient.createSession(this.account.serverUrl, this.account.username, this.account.password);
+          this.account.downloadUrl = refreshed.downloadUrl;
+          this.account.uploadUrl = refreshed.uploadUrl;
+        } catch (e) {
+          console.error("Failed to auto-refresh session for download", e);
+        }
+    }
+
+    if (!this.account.downloadUrl) throw new Error("Download URL not available");
+
+    const downloadUrl = this.account.downloadUrl
+      .replace('{accountId}', this.account.accountId)
+      .replace('{blobId}', blobId)
+      .replace('{name}', encodeURIComponent(name))
+      .replace('{type}', encodeURIComponent(type));
+
+    // Use proxy to avoid CORS
+    const response = await fetch('/api/jmap/download', {
+      method: 'GET',
+      headers: {
+        'X-JMAP-Server-Url': this.account.serverUrl,
+        'X-JMAP-Download-Url': downloadUrl,
+        'X-JMAP-Username': this.account.username,
+        'X-JMAP-Password': this.account.password || '',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to download attachment: ${response.statusText}`);
+    }
+
+    return await response.blob();
+  }
+
+  async provisionDefaultMailboxes(): Promise<void> {
+    const defaultRoles = [
+      { name: "Inbox", role: "inbox" },
+      { name: "Drafts", role: "drafts" },
+      { name: "Sent Items", role: "sent" },
+      { name: "Trash", role: "trash" },
+      { name: "Spam", role: "junk" },
+      { name: "Templates", role: "templates" },
+      { name: "Archive", role: "archive" },
+    ];
+    
+    const createData: Record<string, any> = {};
+    defaultRoles.forEach((box, i) => {
+      createData[`box${i}`] = {
+        name: box.name,
+        role: box.role
+      };
+    });
+
+    await this.call([
+      ["Mailbox/set", { accountId: this.account.accountId, create: createData }, "0"]
+    ]);
   }
 
   async getMailboxes(): Promise<Mailbox[]> {
     const data = await this.call([
       ["Mailbox/get", { accountId: this.account.accountId }, "0"]
     ]);
-    const list = data.methodResponses[0][1].list;
+    const methodResponse = data?.methodResponses?.[0];
+    if (methodResponse?.[0] === "error") {
+      throw new Error(`JMAP Mailbox Error: ${methodResponse[1]?.type || 'Unknown'}`);
+    }
+    const list = methodResponse?.[1]?.list;
+    if (!Array.isArray(list)) return [];
     return list.map((m: any) => ({
       id: m.id,
       name: m.name,
       unread: m.role === 'sent' ? 0 : (m.unreadEmails || 0),
+      totalEmails: m.totalEmails || 0,
       role: m.role,
       icon: m.role === 'inbox' ? 'Inbox' : m.role === 'sent' ? 'Send' : m.role === 'drafts' ? 'File' : m.role === 'trash' ? 'Trash2' : 'File'
     }));
@@ -153,12 +262,22 @@ export class JmapClient {
           name: "Email/query",
           path: "/ids"
         },
-        properties: ["id", "subject", "from", "to", "preview", "bodyValues", "htmlBody", "textBody", "receivedAt", "keywords"],
-        fetchAllBodyValues: true
+        properties: ["id", "subject", "from", "to", "preview", "bodyValues", "htmlBody", "textBody", "receivedAt", "keywords", "headers", "header:List-Unsubscribe:asURLs", "header:List-Unsubscribe:asText", "attachments"],
+        fetchTextBodyValues: true,
+        fetchHTMLBodyValues: true
       }, "1"]
     ]);
 
-    const list = data.methodResponses[1][1].list;
+    // Check if query or get failed directly
+    if (data?.methodResponses?.[0]?.[0] === "error") {
+       throw new Error(`JMAP Email/query Error: ${data.methodResponses[0][1]?.type || 'Unknown'}`);
+    }
+    if (data?.methodResponses?.[1]?.[0] === "error") {
+       throw new Error(`JMAP Email/get Error: ${data.methodResponses[1][1]?.type || 'Unknown'}`);
+    }
+
+    const list = data?.methodResponses?.[1]?.[1]?.list;
+    if (!Array.isArray(list)) return [];
     return list.map((e: any) => {
       let body = "";
       if (e.bodyValues) {
@@ -172,6 +291,35 @@ export class JmapClient {
         }
       }
 
+      let unsubscribeUrl: string | undefined = undefined;
+      
+      // Try JMAP parsed URLs first
+      if (e["header:List-Unsubscribe:asURLs"] && Array.isArray(e["header:List-Unsubscribe:asURLs"]) && e["header:List-Unsubscribe:asURLs"].length > 0) {
+         unsubscribeUrl = e["header:List-Unsubscribe:asURLs"][0];
+      } 
+      // Try JMAP raw text
+      else if (e["header:List-Unsubscribe:asText"]) {
+         const match = String(e["header:List-Unsubscribe:asText"]).match(/<x?(https?:\/\/[^>]+)>/i);
+         if (match && match[1]) {
+           unsubscribeUrl = match[1];
+         }
+      }
+      // Fallback to headers array iteration (if server provided it)
+      if (!unsubscribeUrl && Array.isArray(e.headers)) {
+        const listUnsubscribeHeader = e.headers.find((h: any) => h.name.toLowerCase() === 'list-unsubscribe');
+        if (listUnsubscribeHeader && listUnsubscribeHeader.value) {
+           const match = listUnsubscribeHeader.value.match(/<x?(https?:\/\/[^>]+)>/i);
+           if (match && match[1]) {
+             unsubscribeUrl = match[1];
+           } else {
+             const matchDirect = listUnsubscribeHeader.value.match(/(https?:\/\/[^\s>]+)/i);
+             if (matchDirect && matchDirect[1]) {
+               unsubscribeUrl = matchDirect[1];
+             }
+           }
+        }
+      }
+
       return {
         id: e.id,
         mailboxId,
@@ -182,7 +330,10 @@ export class JmapClient {
         body: body || "No content",
         date: e.receivedAt,
         read: !!e.keywords?.["$seen"],
-        starred: !!e.keywords?.["$flagged"]
+        starred: !!e.keywords?.["$flagged"],
+        unsubscribeUrl,
+        headers: e.headers,
+        attachments: e.attachments
       };
     });
   }
@@ -191,7 +342,7 @@ export class JmapClient {
     const data = await this.call([
       ["Identity/get", { accountId: this.account.accountId }, "0"]
     ]);
-    return data.methodResponses[0][1].list || [];
+    return data?.methodResponses?.[0]?.[1]?.list || [];
   }
 
   async createIdentity(name: string, email: string): Promise<Identity[]> {
@@ -211,6 +362,16 @@ export class JmapClient {
     }
   }
 
+  async deleteIdentity(identityId: string): Promise<void> {
+    const res = await this.call([
+      ["Identity/set", { accountId: this.account.accountId, destroy: [identityId] }, "0"]
+    ]);
+    if (res.methodResponses?.[0]?.[1]?.notDestroyed?.[identityId]) {
+      const error = res.methodResponses[0][1].notDestroyed[identityId];
+      throw new Error(error.description || `Failed to delete identity: ${error.type}`);
+    }
+  }
+
   async sendEmail(
     to: string[],
     subject: string,
@@ -220,7 +381,8 @@ export class JmapClient {
     identityId?: string,
     fromEmail?: string,
     draftId?: string,
-    fromName?: string
+    fromName?: string,
+    attachments?: any[]
   ): Promise<void> {
     // 1. Array wrapper to prevent .map() crashes
     const toArray = Array.isArray(to) ? to : [to];
@@ -290,6 +452,7 @@ export class JmapClient {
             mailboxIds: { [sentMailbox.id]: true },
             bodyValues: { "1": { value: body } },
             textBody: [{ partId: "1" }],
+            attachments: attachments || []
           },
         },
       }, "0"]);
@@ -356,6 +519,7 @@ export class JmapClient {
       mailboxIds: { [draftsMailbox.id]: true },
       bodyValues: { "1": { value: body } },
       textBody: [{ partId: "1" }],
+      attachments: attachments || []
     };
 
     if (cc && cc.length > 0) draftData.cc = cc.map(email => ({ email }));
@@ -397,14 +561,23 @@ export class JmapClient {
   }
 
   async setVacationResponse(config: { isEnabled: boolean, textBody: string, subject?: string }): Promise<void> {
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:vacationresponse"];
+    
+    // Construct strict payload. If turning off, only send isEnabled: false.
+    const updatePayload: any = { isEnabled: config.isEnabled };
+    if (config.isEnabled) {
+      if (config.textBody !== undefined) updatePayload.textBody = config.textBody;
+      if (config.subject !== undefined) updatePayload.subject = config.subject;
+    }
+
     await this.call([
       ["VacationResponse/set", {
         accountId: this.account.accountId,
         update: {
-          "singleton": config
+          "singleton": updatePayload
         }
       }, "0"]
-    ], ["urn:ietf:params:jmap:vacationresponse"]);
+    ], caps);
   }
 
   async getFilters(): Promise<any[]> {
@@ -442,109 +615,153 @@ export class JmapClient {
   }
 
   async getContacts(): Promise<Contact[]> {
-    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts", "urn:ietf:params:jmap:principals"];
-    const contactAccountId = "p";
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
+    const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
     
     try {
+      // Fetch all contacts using ContactCard/get without IDs as demonstrated by user
       const data = await this.call([
-        ["ContactCard/get", { accountId: contactAccountId, ids: null }, "0"]
+        ["ContactCard/get", { 
+          accountId: contactAccountId
+        }, "0"]
       ], caps);
       
-      if (data.methodResponses[0] && data.methodResponses[0][1].list) {
-        return data.methodResponses[0][1].list;
-      }
-      return [];
+      const list = data?.methodResponses?.[0]?.[1]?.list;
+      return list || [];
     } catch (err) {
       console.error("Failed to fetch contacts", err);
-      // Fallback to query if get null fails
-      const data = await this.call([
-        ["ContactCard/query", { accountId: contactAccountId }, "0"],
-        ["ContactCard/get", { accountId: contactAccountId, "#ids": { resultOf: "0", name: "ContactCard/query", path: "/ids" } }, "1"]
-      ], caps);
-      
-      if (data.methodResponses[1] && data.methodResponses[1][1].list) {
-        return data.methodResponses[1][1].list;
+      // Fallback to query/get if null IDs doesn't work on this server
+      try {
+        const queryData = await this.call([
+          ["ContactCard/query", { accountId: contactAccountId, limit: 1000 }, "0"]
+        ], caps);
+        const contactIds = queryData?.methodResponses?.[0]?.[1]?.ids || [];
+        if (contactIds.length === 0) return [];
+
+        const data = await this.call([
+          ["ContactCard/get", { accountId: contactAccountId, ids: contactIds }, "0"]
+        ], caps);
+        return data?.methodResponses?.[0]?.[1]?.list || [];
+      } catch (e) {
+        console.error("Fallback fetch also failed", e);
+        return [];
       }
-      return [];
     }
   }
 
-  async createContact(contact: any): Promise<void> {
-    const contactAccountId = "p";
-    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts", "urn:ietf:params:jmap:principals"];
+  async createContact(fullName: string, email: string, phone?: string, notes?: string): Promise<Contact> {
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
+    const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
     
+    // First, fetch address books to find a valid addressBookId
+    const abData = await this.call([
+      ["AddressBook/get", { accountId: contactAccountId }, "0"]
+    ], caps);
+    const addressBooks = abData?.methodResponses?.[0]?.[1]?.list || [];
+    const addressBookId = addressBooks.length > 0 ? addressBooks[0].id : "b";
+
+    const nameParts = fullName.trim().split(/\s+/);
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.slice(1).join(" ");
+
+    const contactPayload: any = {
+      "@type": "Card",
+      "version": "1.0",
+      addressBookIds: { [addressBookId]: true },
+      name: {
+        components: [
+          { kind: "given", value: firstName },
+          ...(lastName ? [{ kind: "surname", value: lastName }] : [])
+        ],
+        isOrdered: true
+      },
+      emails: {
+        "e1": { address: email, contexts: { "private": true } }
+      },
+      ...(phone ? {
+        phones: {
+          "p1": { number: phone, contexts: { "private": true } }
+        }
+      } : {})
+    };
+    if (notes) {
+      contactPayload.notes = notes;
+    }
+
     const res = await this.call([
       ["ContactCard/set", {
         accountId: contactAccountId,
         create: {
-          "new-contact": {
-            "@type": "Card",
-            "version": "1.0",
-            uid: `urn:uuid:${crypto.randomUUID()}`,
-            kind: "individual",
-            name: {
-              components: [
-                ...(contact.firstName ? [{ kind: "given", value: contact.firstName }] : []),
-                ...(contact.lastName ? [{ kind: "surname", value: contact.lastName }] : [])
-              ]
-            },
-            emails: {
-              "email-1": {
-                address: contact.email,
-                contexts: contact.emailType ? { [contact.emailType]: true } : undefined
-              }
-            },
-            ...(contact.phone ? {
-              phones: {
-                "phone-1": {
-                  number: contact.phone,
-                  contexts: contact.phoneType ? { [contact.phoneType]: true } : undefined
-                }
-              }
-            } : {}),
-            ...(contact.organization ? {
-              organizations: {
-                "org-1": {
-                  name: contact.organization
-                }
-              }
-            } : {})
-          }
+          "new_contact_1": contactPayload
         }
       }, "0"]
     ], caps);
+    
+    const createdId = res.methodResponses?.[0]?.[1]?.created?.["new_contact_1"]?.id;
+    if (!createdId) throw new Error("Failed to create contact");
 
-    const methodResponse = res.methodResponses?.[0];
-    if (!methodResponse) throw new Error("No response from server");
+    return {
+      id: createdId,
+      fullName: fullName,
+      emails: { "e1": { address: email, contexts: { "private": true } } },
+      ...(phone ? { phones: { "p1": { number: phone, contexts: { "private": true } } } } : {}),
+      ...(notes ? { notes: notes } : {})
+    };
+  }
 
-    const [name, response] = methodResponse;
-    if (name === "error") {
-      if (response.type === "invalidProperties") {
-        const fieldErrors: Record<string, string> = {};
-        Object.keys(response.properties).forEach(prop => {
-          fieldErrors[prop] = response.properties[prop].description || "Invalid field";
-        });
-        throw { type: "invalidProperties", fieldErrors };
-      }
-      throw new Error(`JMAP Error: ${response.type} ${response.description || ""}`);
-    }
+  async updateContact(id: string, patches: Partial<Contact>): Promise<void> {
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
+    const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
+
+    await this.call([
+      ["ContactCard/set", {
+        accountId: contactAccountId,
+        update: {
+          [id]: patches
+        }
+      }, "0"]
+    ], caps);
   }
 
   async deleteContact(contactId: string): Promise<void> {
-    const contactAccountId = "p";
-    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts", "urn:ietf:params:jmap:principals"];
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
+    const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
     
-    await this.call([
+    const response = await this.call([
       ["ContactCard/set", {
         accountId: contactAccountId,
         destroy: [contactId]
       }, "0"]
     ], caps);
+
+    const result = response.methodResponses?.[0]?.[1];
+    if (result?.notDestroyed?.[contactId]) {
+      const error = result.notDestroyed[contactId];
+      throw new Error(error.description || `Failed to delete contact: ${error.type}`);
+    }
+  }
+
+  async deleteContacts(contactIds: string[]): Promise<void> {
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
+    const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
+    
+    const response = await this.call([
+      ["ContactCard/set", {
+        accountId: contactAccountId,
+        destroy: contactIds
+      }, "0"]
+    ], caps);
+
+    const result = response.methodResponses?.[0]?.[1];
+    if (result?.notDestroyed && Object.keys(result.notDestroyed).length > 0) {
+      const firstError = Object.values(result.notDestroyed)[0] as any;
+      throw new Error(firstError.description || `Failed to delete some contacts: ${firstError.type}`);
+    }
   }
 
   async importContacts(vcardData: string): Promise<number> {
-    const contactAccountId = "p";
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts", "urn:ietf:params:jmap:principals"];
+    const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
     
     const vcards = vcardData.split("BEGIN:VCARD").filter(v => v.trim().length > 0);
     const toCreate: any = {};
@@ -574,35 +791,17 @@ export class JmapClient {
       });
 
       if (contact.fullName || contact.emails.length > 0) {
-        const names = (contact.fullName || "Imported Contact").split(" ");
-        
-        const emailsMap: any = {};
-        contact.emails.forEach((e: any, i: number) => {
-          emailsMap[`email-${i}`] = { address: e.address };
-        });
-
-        const phonesMap: any = {};
-        contact.phones.forEach((p: any, i: number) => {
-          phonesMap[`phone-${i}`] = { number: p.number };
-        });
-
         toCreate[`import-${idx}`] = {
           "@type": "Card",
-          "version": "1.0",
-          uid: `urn:uuid:${crypto.randomUUID()}`,
-          kind: "individual",
-          name: {
-            components: [
-              ...(names[0] ? [{ kind: "given", value: names[0] }] : []),
-              ...(names.slice(1).join(" ") ? [{ kind: "surname", value: names.slice(1).join(" ") }] : [])
-            ]
+          name: { components: [{ kind: "given", value: contact.fullName || "Imported Contact" }], isOrdered: true },
+          emails: {
+            "e1": { address: contact.emails[0]?.address || "" }
           },
-          ...(Object.keys(emailsMap).length > 0 ? { emails: emailsMap } : {}),
-          ...(Object.keys(phonesMap).length > 0 ? { phones: phonesMap } : {}),
+          ...(contact.phones.length > 0 ? {
+            phones: { "p1": { number: contact.phones[0].number } }
+          } : {}),
           ...(contact.company ? {
-            organizations: {
-              "org-1": { name: contact.company }
-            }
+            organizations: { "o1": { name: contact.company } }
           } : {})
         };
       }
@@ -622,9 +821,23 @@ export class JmapClient {
     return Object.keys(toCreate).length;
   }
 
+  async getCalendars(): Promise<Calendar[]> {
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
+    const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
+    
+    const data = await this.call([
+      ["Calendar/get", { accountId: calendarAccountId, ids: null }, "0"]
+    ], caps);
+    
+    if (data?.methodResponses?.[0] && data.methodResponses[0][1]?.list) {
+      return data.methodResponses[0][1].list;
+    }
+    return [];
+  }
+
   async getEvents(start: string, end: string): Promise<Event[]> {
-    const calendarAccountId = "p";
-    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars", "urn:ietf:params:jmap:principals"];
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
+    const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
 
     try {
       const data = await this.call([
@@ -645,77 +858,104 @@ export class JmapClient {
         }, "1"]
       ], caps);
 
-      if (data.methodResponses[1] && data.methodResponses[1][1].list) {
+      if (data?.methodResponses?.[1] && data.methodResponses[1][1]?.list) {
         return data.methodResponses[1][1].list;
       }
       return [];
     } catch (err) {
       console.error("Failed to fetch events", err);
-      // Fallback
       const data = await this.call([
         ["CalendarEvent/get", { accountId: calendarAccountId, ids: null }, "0"]
       ], caps);
       
-      if (data.methodResponses[0] && data.methodResponses[0][1].list) {
+      if (data?.methodResponses?.[0] && data.methodResponses[0][1]?.list) {
         return data.methodResponses[0][1].list;
       }
       return [];
     }
   }
 
-  async createEvent(event: any): Promise<void> {
-    const calendarAccountId = "p";
-    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars", "urn:ietf:params:jmap:principals"];
+  async createEvent(event: any): Promise<Event> {
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
+    const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
     
-    // Get calendar ID first
-    const calData = await this.call([
-      ["Calendar/get", { accountId: calendarAccountId, ids: null }, "0"]
-    ], caps);
-    
-    let calendarId = null;
-    if (calData.methodResponses[0] && calData.methodResponses[0][1].list && calData.methodResponses[0][1].list.length > 0) {
-      calendarId = calData.methodResponses[0][1].list[0].id;
+    // Get calendar ID first if not provided
+    let calendarId = event.calendarId;
+    if (!calendarId) {
+      const calendars = await this.getCalendars();
+      if (calendars.length > 0) {
+        calendarId = calendars[0].id;
+      }
     }
 
     if (!calendarId) {
       throw new Error("No calendar found to add event to");
     }
 
-    const res = await this.call([
+    const eventPayload = {
+      "@type": "Event",
+      uid: Math.random().toString(36).substring(2) + Date.now(),
+      created: new Date().toISOString(),
+      calendarIds: { [calendarId]: true },
+      title: event.title,
+      description: event.description,
+      start: event.start,
+      duration: event.duration || "PT1H",
+      timeZone: event.timeZone || "UTC",
+      location: event.location
+    };
+
+    const response = await this.call([
       ["CalendarEvent/set", {
         accountId: calendarAccountId,
         create: {
-          "new-event": {
-            "@type": "jscalendar",
-            calendarId: calendarId,
-            title: event.title,
-            description: event.description,
-            start: event.start,
-            duration: "PT1H", // Simple default 1 hour duration
-            locations: event.location ? { "loc-1": { name: event.location } } : undefined
-          }
+          "new-event-1": eventPayload
         }
       }, "0"]
     ], caps);
 
-    const methodResponse = res.methodResponses?.[0];
-    if (!methodResponse) throw new Error("No response from server");
-
-    const [name, response] = methodResponse;
-    if (name === "error") {
-      throw new Error(`JMAP Error: ${response.type} ${response.description || ""}`);
+    const result = response?.methodResponses?.[0]?.[1];
+    
+    if (result?.notCreated?.["new-event-1"]) {
+        const error = result.notCreated["new-event-1"];
+        throw new Error(error.description || `Failed to create event: ${error.type}`);
     }
+
+    const created = result?.created?.["new-event-1"];
+    if (!created?.id) throw new Error("Failed to create event");
+    
+    return { ...eventPayload, id: created.id } as any;
+  }
+
+  async updateEvent(id: string, patches: Partial<Event>): Promise<void> {
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
+    const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
+
+    await this.call([
+      ["CalendarEvent/set", {
+        accountId: calendarAccountId,
+        update: {
+          [id]: patches
+        }
+      }, "0"]
+    ], caps);
   }
 
   async deleteEvent(eventId: string): Promise<void> {
-    const calendarAccountId = "p";
-    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars", "urn:ietf:params:jmap:principals"];
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
+    const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
     
-    await this.call([
+    const response = await this.call([
       ["CalendarEvent/set", {
         accountId: calendarAccountId,
         destroy: [eventId]
       }, "0"]
     ], caps);
+
+    const result = response.methodResponses?.[0]?.[1];
+    if (result?.notDestroyed?.[eventId]) {
+      const error = result.notDestroyed[eventId];
+      throw new Error(error.description || `Failed to delete event: ${error.type}`);
+    }
   }
 }
