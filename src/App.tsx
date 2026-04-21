@@ -1109,12 +1109,36 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       if (!credentials) throw new Error("Not logged in");
       const client = new JmapClient(credentials);
       await client.deleteContact(contactId);
+      
       setContacts(prev => prev.filter(c => c.id !== contactId));
       setSelectedContactIds(prev => prev.filter(id => id !== contactId));
+      
+      // CRITICAL FIX: Only close the modal if the deletion was a success
+      if (selectedContact?.id === contactId) setSelectedContact(null);
+      
       toast.success("Contact deleted");
     } catch (err: any) {
       console.error("Failed to delete contact:", err);
-      toast.error("Failed to delete contact");
+      toast.error(err.message || "Failed to delete contact");
+    }
+  };
+
+  const handleDeleteEvent = async (eventId: string) => {
+    if (!confirm("Are you sure you want to delete this event?")) return;
+    
+    setIsLoading(true);
+    try {
+      if (!credentials) throw new Error("Not logged in");
+      const client = new JmapClient(credentials);
+      await client.deleteEvent(eventId);
+      setEvents(prev => prev.filter(e => e.id !== eventId));
+      if (selectedEvent?.id === eventId) setSelectedEvent(null);
+      toast.success("Event deleted");
+    } catch (err: any) {
+      console.error("Failed to delete event:", err);
+      toast.error("Failed to delete event");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -5295,10 +5319,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     }}
                     className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-700 hover:border-indigo-500/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer group"
                   >
-                    <h3 className="font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400">{event.title}</h3>
-                    <div className="flex items-center gap-2 mt-1 text-slate-500 dark:text-slate-400 text-xs">
-                      <Clock className="w-3 h-3" />
-                      {format(new Date(event.start), 'h:mm a')}
+                    <h3 className="font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate pr-8">{event.title}</h3>
+                    <div className="flex items-center justify-between mt-1">
+                      <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-xs">
+                        <Clock className="w-3 h-3" />
+                        {format(new Date(event.start), 'h:mm a')}
+                      </div>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteEvent(event.id);
+                        }}
+                        className="p-1 text-slate-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 ))
@@ -5381,22 +5416,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
               <div className="flex gap-4 pt-4">
                 <button 
-                  onClick={async () => {
-                    if (confirm('Delete this event?')) {
-                      setIsLoading(true);
-                      try {
-                        const client = new JmapClient(credentials);
-                        await client.deleteEvent(selectedEvent.id);
-                        setEvents(prev => prev.filter(e => e.id !== selectedEvent.id));
-                        setSelectedEvent(null);
-                        toast.success("Event deleted");
-                      } catch (err) {
-                        toast.error("Failed to delete event");
-                      } finally {
-                        setIsLoading(false);
-                      }
-                    }
-                  }}
+                  onClick={() => handleDeleteEvent(selectedEvent.id)}
                   className="flex-1 px-4 py-4 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 font-bold rounded-2xl border border-red-100 dark:border-red-900/30 hover:bg-red-100 transition-all flex items-center justify-center gap-2"
                 >
                   <Trash2 className="w-5 h-5" /> Delete
@@ -5640,9 +5660,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       </button>
                       <button 
                         onClick={async () => {
-                          const id = selectedContact.id;
-                          setSelectedContact(null);
-                          await handleDeleteContact(id);
+                          // REMOVED: setSelectedContact(null) from here to prevent the race condition
+                          await handleDeleteContact(selectedContact.id);
                         }}
                         className="flex-1 max-w-[80px] px-4 py-4 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 font-bold rounded-2xl border border-red-100 dark:border-red-900/30 hover:bg-red-100 transition-all flex items-center justify-center"
                         title="Delete contact"

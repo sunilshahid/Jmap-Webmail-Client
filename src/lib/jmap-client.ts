@@ -732,12 +732,19 @@ export class JmapClient {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
     const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
     
-    await this.request([
+    const response = await this.request([
       ["ContactCard/set", {
         accountId: contactAccountId,
         destroy: contactIds
       }, "0"]
     ], caps);
+
+    // CRITICAL FIX: Catch JMAP-specific destruction errors
+    const result = response.methodResponses?.[0]?.[1];
+    if (result?.notDestroyed && Object.keys(result.notDestroyed).length > 0) {
+      console.error("Server rejected contact deletion:", result.notDestroyed);
+      throw new Error("Server rejected deletion. The contact may no longer exist.");
+    }
   }
 
   async importContacts(vcardData: string): Promise<number> {
@@ -882,15 +889,14 @@ export class JmapClient {
     const eventPayload = {
       "@type": "Event",
       uid: event.uid || (Math.random().toString(36).substring(2) + Date.now()),
-      created: new Date().toISOString(),
       calendarIds: calendarIds,
       title: event.title,
       description: event.description,
       start: event.start,
       duration: event.duration || "PT1H",
       timeZone: event.timeZone || "UTC",
-      location: event.location,
-      priority: 0
+      location: event.location
+      // REMOVED 'created' and 'priority' to prevent Stalwart invalidProperties error
     };
 
     const response = await this.call([
@@ -933,11 +939,18 @@ export class JmapClient {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
     const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
     
-    await this.request([
+    const response = await this.request([
       ["CalendarEvent/set", {
         accountId: calendarAccountId,
         destroy: [eventId]
       }, "0"]
     ], caps);
+
+    // CRITICAL FIX: Catch JMAP-specific destruction errors
+    const result = response.methodResponses?.[0]?.[1];
+    if (result?.notDestroyed && Object.keys(result.notDestroyed).length > 0) {
+      console.error("Server rejected event deletion:", result.notDestroyed);
+      throw new Error("Server rejected event deletion.");
+    }
   }
 }
