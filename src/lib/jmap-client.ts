@@ -713,7 +713,7 @@ export class JmapClient {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
     const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
 
-    await this.call([
+    const response = await this.call([
       ["ContactCard/set", {
         accountId: contactAccountId,
         update: {
@@ -721,6 +721,16 @@ export class JmapClient {
         }
       }, "0"]
     ], caps);
+
+    if (response.methodResponses?.[0]?.[0] === "error") {
+      const errObj = response.methodResponses[0][1];
+      throw new Error(`Server returned error: ${errObj.type}`);
+    }
+    
+    const result = response.methodResponses?.[0]?.[1];
+    if (result?.notUpdated && Object.keys(result.notUpdated).length > 0) {
+      throw new Error("Server rejected update.");
+    }
   }
 
   async deleteContact(contactId: string): Promise<void> {
@@ -732,12 +742,19 @@ export class JmapClient {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
     const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
     
-    const response = await this.request([
+    const response = await this.call([
       ["ContactCard/set", {
         accountId: contactAccountId,
         destroy: contactIds
       }, "0"]
     ], caps);
+
+    // CRITICAL FIX: Catch method-level errors
+    if (response.methodResponses?.[0]?.[0] === "error") {
+      const errObj = response.methodResponses[0][1];
+      console.error("Method error:", errObj);
+      throw new Error(`Server returned error: ${errObj.type}`);
+    }
 
     // CRITICAL FIX: Catch JMAP-specific destruction errors
     const result = response.methodResponses?.[0]?.[1];
@@ -925,7 +942,7 @@ export class JmapClient {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
     const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
 
-    await this.call([
+    const response = await this.call([
       ["CalendarEvent/set", {
         accountId: calendarAccountId,
         update: {
@@ -933,18 +950,35 @@ export class JmapClient {
         }
       }, "0"]
     ], caps);
+
+    if (response.methodResponses?.[0]?.[0] === "error") {
+      const errObj = response.methodResponses[0][1];
+      throw new Error(`Server returned error: ${errObj.type}`);
+    }
+
+    const result = response.methodResponses?.[0]?.[1];
+    if (result?.notUpdated && Object.keys(result.notUpdated).length > 0) {
+      throw new Error("Server rejected update.");
+    }
   }
 
   async deleteEvent(eventId: string): Promise<void> {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
     const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
     
-    const response = await this.request([
+    const response = await this.call([
       ["CalendarEvent/set", {
         accountId: calendarAccountId,
         destroy: [eventId]
       }, "0"]
     ], caps);
+
+    // CRITICAL FIX: Catch method-level errors
+    if (response.methodResponses?.[0]?.[0] === "error") {
+      const errObj = response.methodResponses[0][1];
+      console.error("Method error:", errObj);
+      throw new Error(`Server returned error: ${errObj.type}`);
+    }
 
     // CRITICAL FIX: Catch JMAP-specific destruction errors
     const result = response.methodResponses?.[0]?.[1];

@@ -717,6 +717,23 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [lastSync, setLastSync] = useState<Date>(new Date());
   const [editingContactData, setEditingContactData] = useState<any>(null);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    confirmText: "Delete",
+    onConfirm: () => {}
+  });
+
+  const requireConfirm = (title: string, message: string, onConfirm: () => void, confirmText = "Delete") => {
+    setConfirmDialog({ isOpen: true, title, message, onConfirm, confirmText });
+  };
   
   // Track credentials identity to cancel stale promises during account switches
   const currentUsernameRef = React.useRef(credentials?.username);
@@ -1102,68 +1119,81 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
   };
 
-  const handleDeleteContact = async (contactId: string) => {
-    if (!confirm("Are you sure you want to delete this contact?")) return;
-    
-    try {
-      if (!credentials) throw new Error("Not logged in");
-      const client = new JmapClient(credentials);
-      await client.deleteContact(contactId);
-      
-      setContacts(prev => prev.filter(c => c.id !== contactId));
-      setSelectedContactIds(prev => prev.filter(id => id !== contactId));
-      
-      // CRITICAL FIX: Only close the modal if the deletion was a success
-      if (selectedContact?.id === contactId) setSelectedContact(null);
-      
-      toast.success("Contact deleted");
-    } catch (err: any) {
-      console.error("Failed to delete contact:", err);
-      toast.error(err.message || "Failed to delete contact");
-    }
+  const handleDeleteContact = (contactId: string) => {
+    requireConfirm(
+      "Delete Contact",
+      "Are you sure you want to delete this contact? This action cannot be undone.",
+      async () => {
+        setIsLoading(true);
+        try {
+          if (!credentials) throw new Error("Not logged in");
+          const client = new JmapClient(credentials);
+          await client.deleteContact(contactId);
+          
+          setContacts(prev => prev.filter(c => c.id !== contactId));
+          setSelectedContactIds(prev => prev.filter(id => id !== contactId));
+          
+          if (selectedContact?.id === contactId) setSelectedContact(null);
+          
+          toast.success("Contact deleted");
+        } catch (err: any) {
+          console.error("Failed to delete contact:", err);
+          toast.error(err.message || "Failed to delete contact");
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    );
   };
 
-  const handleDeleteEvent = async (eventId: string) => {
-    if (!confirm("Are you sure you want to delete this event?")) return;
-    
-    setIsLoading(true);
-    try {
-      if (!credentials) throw new Error("Not logged in");
-      const client = new JmapClient(credentials);
-      await client.deleteEvent(eventId);
-      setEvents(prev => prev.filter(e => e.id !== eventId));
-      if (selectedEvent?.id === eventId) setSelectedEvent(null);
-      toast.success("Event deleted");
-    } catch (err: any) {
-      console.error("Failed to delete event:", err);
-      toast.error("Failed to delete event");
-    } finally {
-      setIsLoading(false);
-    }
+  const handleDeleteEvent = (eventId: string) => {
+    requireConfirm(
+      "Delete Event",
+      "Are you sure you want to delete this event? This action cannot be undone.",
+      async () => {
+        setIsLoading(true);
+        try {
+          if (!credentials) throw new Error("Not logged in");
+          const client = new JmapClient(credentials);
+          await client.deleteEvent(eventId);
+          setEvents(prev => prev.filter(e => e.id !== eventId));
+          if (selectedEvent?.id === eventId) setSelectedEvent(null);
+          toast.success("Event deleted");
+        } catch (err: any) {
+          console.error("Failed to delete event:", err);
+          toast.error("Failed to delete event");
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    );
   };
 
-  const handleBulkDeleteContacts = async () => {
+  const handleBulkDeleteContacts = () => {
     if (selectedContactIds.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${selectedContactIds.length} contacts?`)) return;
-
-    setIsLoading(true);
-    try {
-      if (!credentials) throw new Error("Not logged in");
-      const client = new JmapClient(credentials);
-      
-      // We'll perform multiple deletions or a batch delete if supported.
-      // JMAP Contact/set supports multiple IDs in destroy.
-      await client.deleteContacts(selectedContactIds);
-      
-      setContacts(prev => prev.filter(c => !selectedContactIds.includes(c.id)));
-      setSelectedContactIds([]);
-      toast.success(`${selectedContactIds.length} contacts deleted`);
-    } catch (err: any) {
-      console.error("Bulk delete failed", err);
-      toast.error("Failed to delete some contacts");
-    } finally {
-      setIsLoading(false);
-    }
+    
+    requireConfirm(
+      "Delete Contacts",
+      `Are you sure you want to delete ${selectedContactIds.length} contacts? This action cannot be undone.`,
+      async () => {
+        setIsLoading(true);
+        try {
+          if (!credentials) throw new Error("Not logged in");
+          const client = new JmapClient(credentials);
+          
+          await client.deleteContacts(selectedContactIds);
+          
+          setContacts(prev => prev.filter(c => !selectedContactIds.includes(c.id)));
+          setSelectedContactIds([]);
+          toast.success(`${selectedContactIds.length} contacts deleted`);
+        } catch (err: any) {
+          console.error("Bulk delete failed", err);
+          toast.error("Failed to delete some contacts");
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    );
   };
 
   useEffect(() => {
@@ -1849,21 +1879,28 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
   };
 
-  const handleDeleteIdentity = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this identity?")) return;
-    try {
-      if (!credentials) return;
-      const client = new JmapClient(credentials);
-      await client.deleteIdentity(id);
-      setIdentities(prev => prev.filter(i => i.id !== id));
-      if (selectedIdentityId === id) {
-        setSelectedIdentityId(identities.find(i => i.id !== id)?.id || "");
+  const handleDeleteIdentity = (id: string) => {
+    requireConfirm(
+      "Delete Identity",
+      "Are you sure you want to delete this identity?",
+      async () => {
+        try {
+          if (!credentials) return;
+          const client = new JmapClient(credentials);
+          await client.deleteIdentity(id);
+          setIdentities(prev => prev.filter(i => i.id !== id));
+          if (selectedIdentityId === id) {
+            setSelectedIdentityId(identities.find(i => i.id !== id)?.id || "");
+          }
+          toast.success("Identity deleted");
+        } catch (err: any) {
+          console.error("Failed to delete identity", err);
+          toast.error(err.message || "Failed to delete identity");
+        } finally {
+          setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        }
       }
-      toast.success("Identity deleted");
-    } catch (err: any) {
-      console.error("Failed to delete identity", err);
-      toast.error(err.message || "Failed to delete identity");
-    }
+    );
   };
 
   // Fetch Contacts
@@ -5672,6 +5709,45 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Confirm Modal */}
+      {confirmDialog.isOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}></div>
+          <div className="bg-white dark:bg-[#11131f] border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-sm p-6 shadow-2xl relative z-10 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-4 mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-50 dark:bg-red-500/10 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6 text-red-600 dark:text-red-400" />
+              </div>
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">{confirmDialog.title}</h2>
+            </div>
+            <p className="text-slate-600 dark:text-slate-400 mb-8">{confirmDialog.message}</p>
+            <div className="flex items-center justify-end gap-3">
+              <button 
+                onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+                className="px-5 py-2.5 text-sm font-semibold rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                disabled={isLoading}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={async () => {
+                  try {
+                    await confirmDialog.onConfirm();
+                  } finally {
+                    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                  }
+                }}
+                className="px-5 py-2.5 text-sm font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
+                disabled={isLoading}
+              >
+                {isLoading && <RefreshCw className="w-4 h-4 animate-spin" />}
+                {confirmDialog.confirmText}
+              </button>
             </div>
           </div>
         </div>
