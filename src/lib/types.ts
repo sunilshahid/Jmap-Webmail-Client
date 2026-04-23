@@ -69,6 +69,7 @@ export type Account = {
   accountId: string;
   uploadUrl?: string;
   downloadUrl?: string;
+  websocketUrl?: string;
   primaryAccounts: Record<string, string>;
   capabilities: string[];
 };

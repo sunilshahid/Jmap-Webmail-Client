@@ -5,7 +5,7 @@ import {
   Reply, Forward, X, Edit3, Mail, LogOut, Loader2, Server,
   Calendar, Users, RefreshCw, Lock, Clock, Key, Shield, Plus, ExternalLink,
   Sparkles, Download, Upload, Bell, Check, MailCheck, Sun, Filter, ArrowLeft, Paperclip,
-  ChevronLeft, ChevronRight, Edit2, Save, Phone
+  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "./lib/utils";
@@ -14,8 +14,17 @@ import { Mailbox, Email, Identity, Contact, Event, Account } from "./lib/types";
 import { JmapClient } from "./lib/jmap-client";
 import DOMPurify from 'dompurify';
 
+export interface CustomRule {
+  id: string;
+  name: string;
+  active: boolean;
+  type: 'from' | 'subject';
+  value: string;
+  action: 'Trash' | 'Archive' | 'Spam' | 'Inbox';
+}
+
 const iconMap: Record<string, React.ElementType> = {
-  Inbox, Send, File, AlertCircle, Trash2,
+  Inbox, Send, File, AlertCircle, Trash2, Folder, FileEdit, Archive, ShieldAlert, Tag, Users, Bell, LayoutTemplate, Mail
 };
 
 // --- Storage Utilities ---
@@ -770,16 +779,77 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [filterPromotions, setFilterPromotions] = useState(() => localStorage.getItem('webmail_filter_promo') === 'true');
   const [filterSocial, setFilterSocial] = useState(() => localStorage.getItem('webmail_filter_social') === 'true');
   const [filterUpdates, setFilterUpdates] = useState(() => localStorage.getItem('webmail_filter_updates') === 'true');
+  const [customRules, setCustomRules] = useState<CustomRule[]>(() => {
+    const saved = localStorage.getItem('webmail_custom_rules');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<Partial<CustomRule>>({
+    name: '', type: 'from', value: '', action: 'Trash', active: true
+  });
 
-  const compileAndPushSieve = async (promo: boolean, social: boolean, updates: boolean) => {
+  const compileAndPushSieve = async (promo: boolean, social: boolean, updates: boolean, rules: CustomRule[] = customRules) => {
     if (!credentials) return;
-    let script = 'require ["fileinto", "mailbox"];\n\n';
-    if (promo) script += 'if header :contains "list-unsubscribe" "" { fileinto :create "Promotions"; stop; }\n';
-    if (social) script += 'if address :domain :is "from" ["linkedin.com", "twitter.com", "facebook.com", "instagram.com"] { fileinto :create "Social"; stop; }\n';
-    if (updates) script += 'if header :contains "subject" ["receipt", "invoice", "order", "tracking"] { fileinto :create "Updates"; stop; }\n';
     
     try {
       const client = new JmapClient(credentials);
+      
+      // 1. Explicitly create necessary virtual/custom folders immediately
+      const neededFolders = new Set<string>();
+      if (promo) neededFolders.add("Promotions");
+      if (social) neededFolders.add("Social");
+      if (updates) neededFolders.add("Updates");
+      rules.filter(r => r.active).forEach(rule => {
+        if (!['Trash', 'Spam', 'Archive', 'Inbox'].includes(rule.action)) {
+          neededFolders.add(rule.action);
+        }
+      });
+      
+      const createData: Record<string, any> = {};
+      let needsCreation = false;
+      let cId = 0;
+      
+      for (const folderName of neededFolders) {
+        if (!mailboxes.find(m => m.name.toLowerCase() === folderName.toLowerCase())) {
+          createData[`newbox${cId++}`] = { name: folderName };
+          needsCreation = true;
+        }
+      }
+      
+      if (needsCreation) {
+        await client.call([
+          ["Mailbox/set", { accountId: credentials.accountId, create: createData }, "0"]
+        ]);
+        // Refresh mailboxes so they show up in the UI right away
+        await fetchMailboxes();
+      }
+
+      // Get actual mailbox exact string names for Sieve Fallbacks
+      const mboxTrash = mailboxes.find(m => m.role === 'trash')?.name || "Trash";
+      const mboxJunk = mailboxes.find(m => m.role === 'junk')?.name || "Junk Mail";
+      const mboxArchive = mailboxes.find(m => m.role === 'archive')?.name || "Archive";
+
+      let script = 'require ["fileinto", "special-use"];\n\n';
+      
+      rules.filter(r => r.active).forEach(rule => {
+        let condition = '';
+        if (rule.type === 'from') condition = `address :contains "from" "${rule.value.replace(/"/g, '\\"')}"`;
+        else if (rule.type === 'subject') condition = `header :contains "subject" "${rule.value.replace(/"/g, '\\"')}"`;
+        
+        let actionStr = '';
+        if (rule.action === 'Trash') actionStr = `fileinto :specialuse "\\\\Trash" "${mboxTrash}";`;
+        else if (rule.action === 'Spam') actionStr = `fileinto :specialuse "\\\\Junk" "${mboxJunk}";`;
+        else if (rule.action === 'Archive') actionStr = `fileinto :specialuse "\\\\Archive" "${mboxArchive}";`;
+        else if (rule.action === 'Inbox') actionStr = `fileinto "INBOX";`;
+        else actionStr = `fileinto "${rule.action}";`;
+
+        script += `if ${condition} { ${actionStr} stop; }\n`;
+      });
+
+      if (promo) script += 'if exists "List-Unsubscribe" { fileinto "Promotions"; stop; }\n';
+      if (social) script += 'if address :domain :is "from" ["linkedin.com", "twitter.com", "facebook.com", "instagram.com", "pinterest.com", "tiktok.com"] { fileinto "Social"; stop; }\n';
+      if (updates) script += 'if header :contains "subject" ["receipt", "invoice", "order", "tracking", "purchase"] { fileinto "Updates"; stop; }\n';
+      
       await client.updateSieveScript(script);
       toast.success("Mail rules updated");
     } catch (e: any) {
@@ -2071,17 +2141,34 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
   };
 
+  // Real-time WebSocket connection
+  useEffect(() => {
+    if (!credentials) return;
+    
+    // We instantiate a long-lived client simply for the WebSocket
+    const client = new JmapClient(credentials);
+    const connected = client.connectWebSocket((changes) => {
+      // Whenever we get a StateChange from the server, we seamlessly fetch updates
+      // This eliminates the need for manual refreshing
+      syncMail();
+    });
+
+    return () => {
+      client.disconnectWebSocket();
+    };
+  }, [credentials, selectedMailbox]); // re-bind if credentials or selectedMailbox changes (to ensure syncMail captures the right one)
+
   // Initial fetch when mailbox changes
   useEffect(() => {
     fetchEmails(selectedMailbox, false);
   }, [selectedMailbox, fetchEmails]);
 
-  // Polling interval (every 15 seconds)
+  // Polling interval fallback (every 5 minutes) since we use WebSockets for real-time
   useEffect(() => {
     if (!selectedMailbox) return;
     const intervalId = setInterval(() => {
       fetchEmails(selectedMailbox, true);
-    }, 15000);
+    }, 300000);
     return () => clearInterval(intervalId);
   }, [selectedMailbox, fetchEmails]);
 
@@ -2439,7 +2526,25 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           </div>
           <ul className="space-y-1.5 px-3 mb-6">
             {(mailboxes || []).map((mb) => {
-              const Icon = iconMap[mb.icon] || Mail;
+              let Icon = iconMap[mb.icon] || Mail;
+              let displayName = mb.name;
+
+              // Clean up icons and rename Junk to Spam
+              if (mb.role === 'junk') {
+                displayName = 'Spam';
+                Icon = ShieldAlert;
+              } else if (mb.role === 'trash') {
+                Icon = Trash2;
+              } else if (mb.role === 'drafts') {
+                Icon = FileEdit;
+              } else if (mb.role === 'inbox') {
+                Icon = Inbox;
+              } else if (mb.role === 'archive') {
+                Icon = Archive;
+              } else if (mb.role === 'sent') {
+                Icon = Send;
+              }
+
               const isSelected = selectedMailbox === mb.id;
               return (
                 <React.Fragment key={mb.id}>
@@ -2467,7 +2572,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <Icon className="w-5 h-5" />
                         </div>
                         <div className="flex flex-col items-start leading-tight">
-                          <span className="text-[17px] font-bold tracking-wide">{mb.name}</span>
+                          <span className="text-[17px] font-bold tracking-wide">{displayName}</span>
                           <span className="text-[11px] text-slate-500 font-medium mt-0.5">
                             {mb.unread} unread • {mb.totalEmails || 0} total
                           </span>
@@ -4247,24 +4352,92 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
                             <Filter className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                           </div>
-                          <div>
+                          <div className="flex-1">
                             <h2 className="text-xl font-bold text-slate-900 dark:text-white">Custom Rules</h2>
                             <p className="text-xs text-slate-500 dark:text-slate-400">Create specific Sieve rules to route, flag, or delete incoming messages.</p>
                           </div>
-                        </div>
-
-                        <div className="py-12 flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-3xl bg-slate-50/50 dark:bg-black">
-                          <div className="w-16 h-16 bg-slate-100 dark:bg-[#11131f] rounded-2xl flex items-center justify-center mb-4 text-slate-400">
-                            <Filter className="w-8 h-8" />
-                          </div>
-                          <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">No custom rules active</h3>
-                          <p className="text-sm text-slate-500 dark:text-slate-400 mb-8 max-w-xs">
-                            Organize your inbox by setting up automated rules for your incoming messages.
-                          </p>
-                          <button className="px-8 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]">
-                            Create New Rule
+                          <button 
+                            onClick={() => {
+                              setEditingRule({ id: '', name: '', type: 'from', value: '', action: 'Trash', active: true });
+                              setIsRuleModalOpen(true);
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-xl"
+                          >
+                            <Plus className="w-5 h-5" />
                           </button>
                         </div>
+
+                        {customRules.length === 0 ? (
+                          <div className="py-12 flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-3xl bg-slate-50/50 dark:bg-black">
+                            <div className="w-16 h-16 bg-slate-100 dark:bg-[#11131f] rounded-2xl flex items-center justify-center mb-4 text-slate-400">
+                              <Filter className="w-8 h-8" />
+                            </div>
+                            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">No custom rules active</h3>
+                            <p className="text-sm text-slate-500 dark:text-slate-400 mb-8 max-w-xs">
+                              Organize your inbox by setting up automated rules for your incoming messages.
+                            </p>
+                            <button 
+                              onClick={() => {
+                                setEditingRule({ id: '', name: '', type: 'from', value: '', action: 'Trash', active: true });
+                                setIsRuleModalOpen(true);
+                              }}
+                              className="px-8 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]">
+                              Create New Rule
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {customRules.map(rule => (
+                              <div key={rule.id} className="flex flex-row items-center justify-between p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 gap-4 shadow-sm">
+                                <div className="flex-1 min-w-0 pr-4">
+                                  <div className="flex items-center gap-2">
+                                    <div className="font-bold text-slate-900 dark:text-white text-lg">{rule.name}</div>
+                                    <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full">
+                                      Move to {rule.action}
+                                    </span>
+                                  </div>
+                                  <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                                    If <span className="font-semibold text-slate-700 dark:text-slate-300">{rule.type}</span> contains "{rule.value}"
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={() => {
+                                    setEditingRule(rule);
+                                    setIsRuleModalOpen(true);
+                                  }}
+                                  className="p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    const updated = customRules.map(r => r.id === rule.id ? { ...r, active: !r.active } : r);
+                                    setCustomRules(updated);
+                                    localStorage.setItem('webmail_custom_rules', JSON.stringify(updated));
+                                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, updated);
+                                  }}
+                                  className={cn(
+                                    "relative inline-flex h-8 w-14 items-center rounded-full transition-all focus:outline-none shrink-0",
+                                    rule.active ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                                  )}
+                                >
+                                  <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", rule.active ? "translate-x-7" : "translate-x-1")} />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    const updated = customRules.filter(r => r.id !== rule.id);
+                                    setCustomRules(updated);
+                                    localStorage.setItem('webmail_custom_rules', JSON.stringify(updated));
+                                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, updated);
+                                  }}
+                                  className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -5014,6 +5187,110 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
             >
               Undo
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Rule Modal */}
+      {isRuleModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-slate-900 dark:text-white">
+                {editingRule.id ? 'Edit Rule' : 'Create Rule'}
+              </h3>
+              <button 
+                onClick={() => setIsRuleModalOpen(false)}
+                className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-full transition-colors"
+                title="Close Modal"
+              >
+                <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-5">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Rule Name</label>
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="e.g. Delete Mark's spam"
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
+                  value={editingRule.name || ''}
+                  onChange={e => setEditingRule({...editingRule, name: e.target.value})}
+                />
+              </div>
+
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">If</label>
+                  <select 
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
+                    value={editingRule.type}
+                    onChange={e => setEditingRule({...editingRule, type: e.target.value as any})}
+                  >
+                    <option value="from">Sender Address</option>
+                    <option value="subject">Subject contains</option>
+                  </select>
+                </div>
+                <div className="flex-[2]">
+                  <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Contains</label>
+                  <input
+                    type="text"
+                    placeholder={editingRule.type === 'from' ? "email@example.com" : "invoice"}
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
+                    value={editingRule.value || ''}
+                    onChange={e => setEditingRule({...editingRule, value: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Then move to</label>
+                <select 
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white mb-2"
+                  value={editingRule.action}
+                  onChange={e => setEditingRule({...editingRule, action: e.target.value as any})}
+                >
+                  <option value="Trash">Trash / Delete</option>
+                  <option value="Spam">Spam</option>
+                  <option value="Archive">Archive</option>
+                  <option value="Inbox">Inbox</option>
+                </select>
+              </div>
+
+              <button 
+                onClick={() => {
+                  if (!editingRule.name || !editingRule.value) {
+                     toast.error("Please fill required fields");
+                     return;
+                  }
+                  const newRule: CustomRule = {
+                     id: editingRule.id || Math.random().toString(36).substring(7),
+                     name: editingRule.name,
+                     active: editingRule.active ?? true,
+                     type: editingRule.type as any,
+                     value: editingRule.value,
+                     action: editingRule.action as any,
+                  };
+                  
+                  let updatedRules: CustomRule[];
+                  if (editingRule.id) {
+                     updatedRules = customRules.map(r => r.id === newRule.id ? newRule : r);
+                  } else {
+                     updatedRules = [...customRules, newRule];
+                  }
+                  
+                  setCustomRules(updatedRules);
+                  localStorage.setItem('webmail_custom_rules', JSON.stringify(updatedRules));
+                  compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, updatedRules);
+                  setIsRuleModalOpen(false);
+                }}
+                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]"
+              >
+                Save Sieve Rule
+              </button>
+            </div>
           </div>
         </div>
       )}

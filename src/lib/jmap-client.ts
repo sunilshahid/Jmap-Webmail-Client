@@ -2,6 +2,7 @@ import { Account, Mailbox, Email, Identity, Contact, Event, Calendar } from './t
 
 export class JmapClient {
   private account: Account;
+  public ws: WebSocket | null = null;
 
   constructor(account: Account) {
     this.account = account;
@@ -101,7 +102,9 @@ export class JmapClient {
           "urn:ietf:params:jmap:submission",
           "urn:ietf:params:jmap:contacts",
           "urn:ietf:params:jmap:calendars",
-          "urn:ietf:params:jmap:principals"
+          "urn:ietf:params:jmap:principals",
+          "urn:ietf:params:jmap:websocket",
+          "urn:ietf:params:jmap:sieve"
         ]
       })
     });
@@ -121,8 +124,9 @@ export class JmapClient {
     const capabilities = Object.keys(session.capabilities || {});
     const uploadUrl = session.uploadUrl;
     const downloadUrl = session.downloadUrl;
+    const websocketUrl = session.capabilities?.["urn:ietf:params:jmap:websocket"]?.url;
     
-    return { serverUrl, username, password, token, apiUrl, accountId, uploadUrl, downloadUrl, primaryAccounts, capabilities };
+    return { serverUrl, username, password, token, apiUrl, accountId, uploadUrl, downloadUrl, websocketUrl, primaryAccounts, capabilities };
   }
 
   async uploadBlob(file: File, accountId: string): Promise<{ accountId: string, blobId: string, type: string, size: number }> {
@@ -132,6 +136,7 @@ export class JmapClient {
         const refreshed = await JmapClient.createSession(this.account.serverUrl, this.account.username, this.account.password);
         this.account.uploadUrl = refreshed.uploadUrl;
         this.account.downloadUrl = refreshed.downloadUrl;
+        this.account.websocketUrl = refreshed.websocketUrl;
         // Also update other potential missing fields
         this.account.apiUrl = refreshed.apiUrl;
         this.account.accountId = refreshed.accountId;
@@ -172,6 +177,7 @@ export class JmapClient {
           const refreshed = await JmapClient.createSession(this.account.serverUrl, this.account.username, this.account.password);
           this.account.downloadUrl = refreshed.downloadUrl;
           this.account.uploadUrl = refreshed.uploadUrl;
+          this.account.websocketUrl = refreshed.websocketUrl;
         } catch (e) {
           console.error("Failed to auto-refresh session for download", e);
         }
@@ -201,6 +207,85 @@ export class JmapClient {
     }
 
     return await response.blob();
+  }
+
+  connectWebSocket(onStateChange: (changed: any) => void): boolean {
+    if (!this.account.websocketUrl) {
+      console.warn("Server does not support or provide a WebSocket URL in session.");
+      return false;
+    }
+
+    if (this.ws) {
+      this.ws.close();
+    }
+
+    try {
+      const urlObj = new URL(this.account.websocketUrl);
+      
+      // Fix protocols automatically for secure origins
+      if (urlObj.port === "443" && urlObj.protocol === "ws:") {
+        urlObj.protocol = "wss:";
+      } else if (typeof window !== "undefined" && window.location.protocol === "https:" && urlObj.protocol === "ws:") {
+        urlObj.protocol = "wss:";
+      }
+
+      // Embed Basic Auth via URL if credentials are not tokens
+      if (this.account.username && this.account.password) {
+        urlObj.username = encodeURIComponent(this.account.username);
+        urlObj.password = encodeURIComponent(this.account.password);
+      }
+
+      console.log(`Connecting to JMAP WebSocket at ${urlObj.host}...`);
+      // Standard subprotocol for JMAP is 'jmap'
+      this.ws = new WebSocket(urlObj.toString(), "jmap");
+
+      this.ws.onopen = () => {
+        console.log("JMAP WebSocket Connected successfully.");
+        // We can optionally send an initial 'Core/echo' to test.
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          
+          if (payload["@type"] === "StateChange") {
+            const changes = payload.changed;
+            // The changes object maps accountId -> { Type: 'new_state' }
+            const accountId = this.account.accountId || "p";
+            const currentAccountChanges = changes[accountId] || 
+                                          changes[this.account.primaryAccounts?.["urn:ietf:params:jmap:mail"] || "p"] ||
+                                          Object.values(changes)[0]; // Fallback to whatever account was changed
+            if (currentAccountChanges) {
+              console.log("WebSocket StateChange received!", currentAccountChanges);
+              onStateChange(currentAccountChanges);
+            }
+          }
+        } catch (err) {
+          console.error("Error parsing WebSocket message:", err);
+        }
+      };
+
+      this.ws.onerror = (err) => {
+        console.error("JMAP WebSocket Error:", err);
+      };
+
+      this.ws.onclose = () => {
+        console.log("JMAP WebSocket Closed.");
+        this.ws = null;
+      };
+
+      return true;
+    } catch (e) {
+      console.error("Failed to initialize WebSocket:", e);
+      return false;
+    }
+  }
+
+  disconnectWebSocket() {
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
   }
 
   async provisionDefaultMailboxes(): Promise<void> {
@@ -237,14 +322,28 @@ export class JmapClient {
     }
     const list = methodResponse?.[1]?.list;
     if (!Array.isArray(list)) return [];
-    return list.map((m: any) => ({
-      id: m.id,
-      name: m.name,
-      unread: m.role === 'sent' ? 0 : (m.unreadEmails || 0),
-      totalEmails: m.totalEmails || 0,
-      role: m.role,
-      icon: m.role === 'inbox' ? 'Inbox' : m.role === 'sent' ? 'Send' : m.role === 'drafts' ? 'File' : m.role === 'trash' ? 'Trash2' : 'File'
-    }));
+    return list.map((m: any) => {
+      let icon = 'Folder';
+      if (m.role === 'inbox') icon = 'Inbox';
+      else if (m.role === 'sent') icon = 'Send';
+      else if (m.role === 'drafts') icon = 'FileEdit';
+      else if (m.role === 'trash') icon = 'Trash2';
+      else if (m.role === 'archive') icon = 'Archive';
+      else if (m.role === 'junk' || m.name === 'Junk Mail') icon = 'ShieldAlert';
+      else if (m.name === 'Promotions') icon = 'Tag';
+      else if (m.name === 'Social') icon = 'Users';
+      else if (m.name === 'Updates') icon = 'Bell';
+      else if (m.name === 'Templates') icon = 'LayoutTemplate';
+
+      return {
+        id: m.id,
+        name: m.role === 'junk' || m.name === 'Junk Mail' ? 'Spam' : m.name,
+        unread: (m.role === 'sent' || m.role === 'trash') ? 0 : (m.unreadEmails || 0),
+        totalEmails: m.totalEmails || 0,
+        role: m.role,
+        icon: icon
+      };
+    });
   }
 
   async getEmails(mailboxId: string): Promise<Email[]> {
@@ -599,19 +698,48 @@ export class JmapClient {
   }
 
   async updateSieveScript(scriptContent: string): Promise<void> {
-    await this.call([
-      ["SieveScript/set", {
-        accountId: this.account.accountId,
-        onSuccessDestroy: ["webmail-master-script"],
-        create: {
-          "webmail-master-script": {
-            name: "Webmail Rules",
-            content: scriptContent,
-            isActive: true
-          }
-        }
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:sieve"];
+    const sieveAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:sieve"] || this.account.accountId || "p";
+
+    // Sieve scripts must be uploaded as blobs first
+    const file = new File([scriptContent], "script.sieve", { type: "application/sieve" });
+    const uploaded = await this.uploadBlob(file, sieveAccountId);
+    const blobId = uploaded.blobId;
+
+    // 1. Fetch existing Sieve scripts
+    const queryData = await this.call([
+      ["SieveScript/get", {
+        accountId: sieveAccountId
       }, "0"]
-    ], ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:sieve"]);
+    ], caps);
+
+    const scripts = queryData.methodResponses?.[0]?.[1]?.list || [];
+    const existingScript = scripts.find((s: any) => s.name === "Webmail Rules");
+
+    const methodArgs: any = { accountId: sieveAccountId };
+
+    if (existingScript) {
+      // 2. Update existing script with new blobId
+      methodArgs.update = {
+        [existingScript.id]: {
+          blobId: blobId
+        }
+      };
+      methodArgs.onSuccessActivateScript = existingScript.id;
+    } else {
+      // 3. Create new script
+      methodArgs.create = {
+        "webmail-master-script": {
+          name: "Webmail Rules",
+          blobId: blobId
+        }
+      };
+      methodArgs.onSuccessActivateScript = "#webmail-master-script";
+    }
+
+    await this.call([
+      ["SieveScript/set", methodArgs, "0"]
+    ], caps);
   }
 
   async getContacts(): Promise<Contact[]> {
