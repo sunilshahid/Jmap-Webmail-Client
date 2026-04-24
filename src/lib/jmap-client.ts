@@ -297,6 +297,7 @@ export class JmapClient {
       { name: "Spam", role: "junk" },
       { name: "Templates", role: "templates" },
       { name: "Archive", role: "archive" },
+      { name: "Reports", role: null },
     ];
     
     const createData: Record<string, any> = {};
@@ -334,6 +335,7 @@ export class JmapClient {
       else if (m.name === 'Social') icon = 'Users';
       else if (m.name === 'Updates') icon = 'Bell';
       else if (m.name === 'Templates') icon = 'LayoutTemplate';
+      else if (m.name.toLowerCase().includes('report')) icon = 'BarChart3';
 
       return {
         id: m.id,

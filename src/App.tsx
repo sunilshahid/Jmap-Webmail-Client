@@ -5,7 +5,7 @@ import {
   Reply, Forward, X, Edit3, Mail, LogOut, Loader2, Server,
   Calendar, Users, RefreshCw, Lock, Clock, Key, Shield, Plus, ExternalLink,
   Sparkles, Download, Upload, Bell, Check, MailCheck, Sun, Filter, ArrowLeft, Paperclip,
-  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate
+  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "./lib/utils";
@@ -14,17 +14,32 @@ import { Mailbox, Email, Identity, Contact, Event, Account } from "./lib/types";
 import { JmapClient } from "./lib/jmap-client";
 import DOMPurify from 'dompurify';
 
+export type RuleConditionType = 'subject' | 'from' | 'to' | 'body' | 'header' | 'size' | 'spam_score';
+export type RuleMatcher = 'contains' | 'is' | 'regex' | 'starts_with' | 'ends_with' | 'gt' | 'lt';
+export type RuleActionType = 'move' | 'forward' | 'reject' | 'mark_read' | 'mark_spam' | 'add_flag';
+
+export interface CustomRuleCondition {
+  type: RuleConditionType;
+  matcher: RuleMatcher;
+  headerName?: string;
+  value: string;
+}
+
+export interface CustomRuleAction {
+  type: RuleActionType;
+  value: string;
+}
+
 export interface CustomRule {
   id: string;
   name: string;
   active: boolean;
-  type: 'from' | 'subject';
-  value: string;
-  action: 'Trash' | 'Archive' | 'Spam' | 'Inbox';
+  condition: CustomRuleCondition;
+  action: CustomRuleAction;
 }
 
 const iconMap: Record<string, React.ElementType> = {
-  Inbox, Send, File, AlertCircle, Trash2, Folder, FileEdit, Archive, ShieldAlert, Tag, Users, Bell, LayoutTemplate, Mail
+  Inbox, Send, File, AlertCircle, Trash2, Folder, FileEdit, Archive, ShieldAlert, Tag, Users, Bell, LayoutTemplate, Mail, BarChart3
 };
 
 // --- Storage Utilities ---
@@ -779,16 +794,20 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [filterPromotions, setFilterPromotions] = useState(() => localStorage.getItem('webmail_filter_promo') === 'true');
   const [filterSocial, setFilterSocial] = useState(() => localStorage.getItem('webmail_filter_social') === 'true');
   const [filterUpdates, setFilterUpdates] = useState(() => localStorage.getItem('webmail_filter_updates') === 'true');
+  const [filterReports, setFilterReports] = useState(() => localStorage.getItem('webmail_filter_reports') === 'true');
   const [customRules, setCustomRules] = useState<CustomRule[]>(() => {
     const saved = localStorage.getItem('webmail_custom_rules');
     return saved ? JSON.parse(saved) : [];
   });
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<Partial<CustomRule>>({
-    name: '', type: 'from', value: '', action: 'Trash', active: true
+    name: '',
+    active: true,
+    condition: { type: 'subject', matcher: 'contains', value: '' },
+    action: { type: 'move', value: 'Trash' }
   });
 
-  const compileAndPushSieve = async (promo: boolean, social: boolean, updates: boolean, rules: CustomRule[] = customRules) => {
+  const compileAndPushSieve = async (promo: boolean, social: boolean, updates: boolean, reports: boolean, rules: CustomRule[] = customRules) => {
     if (!credentials) return;
     
     try {
@@ -799,9 +818,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       if (promo) neededFolders.add("Promotions");
       if (social) neededFolders.add("Social");
       if (updates) neededFolders.add("Updates");
+      if (reports) neededFolders.add("Reports");
       rules.filter(r => r.active).forEach(rule => {
-        if (!['Trash', 'Spam', 'Archive', 'Inbox'].includes(rule.action)) {
-          neededFolders.add(rule.action);
+        if (rule.action.type === 'move' && !['Trash', 'Spam', 'Archive', 'Inbox'].includes(rule.action.value)) {
+           neededFolders.add(rule.action.value);
         }
       });
       
@@ -829,19 +849,57 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       const mboxJunk = mailboxes.find(m => m.role === 'junk')?.name || "Junk Mail";
       const mboxArchive = mailboxes.find(m => m.role === 'archive')?.name || "Archive";
 
-      let script = 'require ["fileinto", "special-use"];\n\n';
+      let script = 'require ["fileinto", "special-use", "envelope", "body", "reject", "regex", "relational", "comparator-i;ascii-numeric", "copy", "imap4flags"];\n\n';
       
       rules.filter(r => r.active).forEach(rule => {
         let condition = '';
-        if (rule.type === 'from') condition = `address :contains "from" "${rule.value.replace(/"/g, '\\"')}"`;
-        else if (rule.type === 'subject') condition = `header :contains "subject" "${rule.value.replace(/"/g, '\\"')}"`;
+        const cType = rule.condition.type;
+        const cMatcher = rule.condition.matcher;
+        const cVal = rule.condition.value.replace(/"/g, '\\"');
+        const cHeader = rule.condition.headerName?.replace(/"/g, '\\"') || cType;
+
+        if (cType === 'size') {
+           const sizeVal = parseInt(cVal) || 0;
+           if (cMatcher === 'gt') condition = `size :over ${sizeVal}`;
+           else condition = `size :under ${sizeVal}`;
+        } else if (cType === 'spam_score') {
+           condition = `header :value "ge" :comparator "i;ascii-numeric" "X-Spam-Score" "${cVal}"`;
+        } else {
+           let target = '';
+           if (cType === 'body') target = 'body :text';
+           else if (cType === 'from') target = 'address "from"';
+           else if (cType === 'to') target = 'address "to"';
+           else target = `header "${cType === 'header' ? cHeader : cType}"`;
+
+           if (cMatcher === 'contains') condition = `${target} :contains "${cVal}"`;
+           else if (cMatcher === 'is') condition = `${target} :is "${cVal}"`;
+           else if (cMatcher === 'starts_with') condition = `${target} :matches "${cVal}*"`;
+           else if (cMatcher === 'ends_with') condition = `${target} :matches "*${cVal}"`;
+           else if (cMatcher === 'regex') condition = `${target} :regex "${cVal}"`;
+           else condition = `${target} :contains "${cVal}"`; // fallback
+        }
         
         let actionStr = '';
-        if (rule.action === 'Trash') actionStr = `fileinto :specialuse "\\\\Trash" "${mboxTrash}";`;
-        else if (rule.action === 'Spam') actionStr = `fileinto :specialuse "\\\\Junk" "${mboxJunk}";`;
-        else if (rule.action === 'Archive') actionStr = `fileinto :specialuse "\\\\Archive" "${mboxArchive}";`;
-        else if (rule.action === 'Inbox') actionStr = `fileinto "INBOX";`;
-        else actionStr = `fileinto "${rule.action}";`;
+        const aType = rule.action.type;
+        const aVal = rule.action.value.replace(/"/g, '\\"');
+        
+        if (aType === 'move') {
+           if (aVal === 'Trash') actionStr = `fileinto :specialuse "\\\\Trash" "${mboxTrash}";`;
+           else if (aVal === 'Spam') actionStr = `fileinto :specialuse "\\\\Junk" "${mboxJunk}";`;
+           else if (aVal === 'Archive') actionStr = `fileinto :specialuse "\\\\Archive" "${mboxArchive}";`;
+           else if (aVal === 'Inbox') actionStr = `fileinto "INBOX";`;
+           else actionStr = `fileinto "${aVal}";`;
+        } else if (aType === 'forward') {
+           actionStr = `redirect "${aVal}"; keep;`;
+        } else if (aType === 'reject') {
+           actionStr = `reject "${aVal}";`;
+        } else if (aType === 'mark_read') {
+           actionStr = `addflag "\\\\Seen"; keep;`;
+        } else if (aType === 'mark_spam') {
+           actionStr = `fileinto :specialuse "\\\\Junk" "${mboxJunk}";`;
+        } else if (aType === 'add_flag') {
+           actionStr = `addflag "${aVal}"; keep;`;
+        }
 
         script += `if ${condition} { ${actionStr} stop; }\n`;
       });
@@ -849,6 +907,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       if (promo) script += 'if exists "List-Unsubscribe" { fileinto "Promotions"; stop; }\n';
       if (social) script += 'if address :domain :is "from" ["linkedin.com", "twitter.com", "facebook.com", "instagram.com", "pinterest.com", "tiktok.com"] { fileinto "Social"; stop; }\n';
       if (updates) script += 'if header :contains "subject" ["receipt", "invoice", "order", "tracking", "purchase"] { fileinto "Updates"; stop; }\n';
+      if (reports) script += 'if header :contains "subject" ["report", "dmarc", "postmaster", "aggregated", "forensic"] { fileinto "Reports"; stop; }\n';
       
       await client.updateSieveScript(script);
       toast.success("Mail rules updated");
@@ -2543,6 +2602,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 Icon = Archive;
               } else if (mb.role === 'sent') {
                 Icon = Send;
+              } else if (mb.name.toLowerCase().includes('report')) {
+                Icon = BarChart3;
               }
 
               const isSelected = selectedMailbox === mb.id;
@@ -4322,6 +4383,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             { id: 'promotions', label: 'Promotions', description: 'Marketing, newsletters, and promotional emails', active: filterPromotions },
                             { id: 'social', label: 'Social', description: 'Notifications from social networks and media sites', active: filterSocial },
                             { id: 'updates', label: 'Updates', description: 'Transactional emails, receipts, and confirmations', active: filterUpdates },
+                            { id: 'reports', label: 'Reports', description: 'Domain reports, DMARC, and Postmaster reports', active: filterReports },
                           ].map((cat) => (
                             <div key={cat.id} className="flex flex-row items-center justify-between p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 transition-colors gap-4">
                               <div className="flex-1 min-w-0 pr-4">
@@ -4331,9 +4393,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               <button 
                                 onClick={() => {
                                   const newState = !cat.active;
-                                  if (cat.id === 'promotions') { setFilterPromotions(newState); localStorage.setItem('webmail_filter_promo', newState.toString()); compileAndPushSieve(newState, filterSocial, filterUpdates); }
-                                  if (cat.id === 'social') { setFilterSocial(newState); localStorage.setItem('webmail_filter_social', newState.toString()); compileAndPushSieve(filterPromotions, newState, filterUpdates); }
-                                  if (cat.id === 'updates') { setFilterUpdates(newState); localStorage.setItem('webmail_filter_updates', newState.toString()); compileAndPushSieve(filterPromotions, filterSocial, newState); }
+                                  if (cat.id === 'promotions') { setFilterPromotions(newState); localStorage.setItem('webmail_filter_promo', newState.toString()); compileAndPushSieve(newState, filterSocial, filterUpdates, filterReports); }
+                                  if (cat.id === 'social') { setFilterSocial(newState); localStorage.setItem('webmail_filter_social', newState.toString()); compileAndPushSieve(filterPromotions, newState, filterUpdates, filterReports); }
+                                  if (cat.id === 'updates') { setFilterUpdates(newState); localStorage.setItem('webmail_filter_updates', newState.toString()); compileAndPushSieve(filterPromotions, filterSocial, newState, filterReports); }
+                                  if (cat.id === 'reports') { setFilterReports(newState); localStorage.setItem('webmail_filter_reports', newState.toString()); compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, newState); }
                                 }}
                                 className={cn(
                                   "relative inline-flex h-8 w-14 items-center rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 shrink-0",
@@ -4358,7 +4421,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           </div>
                           <button 
                             onClick={() => {
-                              setEditingRule({ id: '', name: '', type: 'from', value: '', action: 'Trash', active: true });
+                              setEditingRule({ id: '', name: '', active: true, condition: { type: 'subject', matcher: 'contains', value: '' }, action: { type: 'move', value: 'Trash' } });
                               setIsRuleModalOpen(true);
                             }}
                             className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-xl"
@@ -4378,7 +4441,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             </p>
                             <button 
                               onClick={() => {
-                                setEditingRule({ id: '', name: '', type: 'from', value: '', action: 'Trash', active: true });
+                                setEditingRule({ id: '', name: '', active: true, condition: { type: 'subject', matcher: 'contains', value: '' }, action: { type: 'move', value: 'Trash' } });
                                 setIsRuleModalOpen(true);
                               }}
                               className="px-8 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]">
@@ -4393,11 +4456,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                   <div className="flex items-center gap-2">
                                     <div className="font-bold text-slate-900 dark:text-white text-lg">{rule.name}</div>
                                     <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full">
-                                      Move to {rule.action}
+                                      {rule.action?.type?.replace('_', ' ')} {rule.action?.value}
                                     </span>
                                   </div>
                                   <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                                    If <span className="font-semibold text-slate-700 dark:text-slate-300">{rule.type}</span> contains "{rule.value}"
+                                    If <span className="font-semibold text-slate-700 dark:text-slate-300">{rule.condition?.type}</span> {rule.condition?.matcher?.replace('_', ' ')} "{rule.condition?.value}"
                                   </div>
                                 </div>
                                 <button 
@@ -4414,7 +4477,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                     const updated = customRules.map(r => r.id === rule.id ? { ...r, active: !r.active } : r);
                                     setCustomRules(updated);
                                     localStorage.setItem('webmail_custom_rules', JSON.stringify(updated));
-                                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, updated);
+                                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, updated);
                                   }}
                                   className={cn(
                                     "relative inline-flex h-8 w-14 items-center rounded-full transition-all focus:outline-none shrink-0",
@@ -4428,7 +4491,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                     const updated = customRules.filter(r => r.id !== rule.id);
                                     setCustomRules(updated);
                                     localStorage.setItem('webmail_custom_rules', JSON.stringify(updated));
-                                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, updated);
+                                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, updated);
                                   }}
                                   className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
                                 >
@@ -5193,11 +5256,12 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
       {/* Custom Rule Modal */}
       {isRuleModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-                {editingRule.id ? 'Edit Rule' : 'Create Rule'}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto pt-20 pb-20">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in duration-200 my-auto">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
+              <h3 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Filter className="w-5 h-5 text-indigo-500" />
+                {editingRule.id ? 'Edit Custom Rule' : 'Create Custom Rule'}
               </h3>
               <button 
                 onClick={() => setIsRuleModalOpen(false)}
@@ -5208,88 +5272,240 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               </button>
             </div>
             
-            <div className="p-6 space-y-5">
+            <div className="p-6 space-y-6">
               <div>
                 <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Rule Name</label>
                 <input
                   autoFocus
                   type="text"
                   placeholder="e.g. Delete Mark's spam"
-                  className="w-full px-4 py-3 bg-slate-50 dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
+                  className="w-full px-4 py-3 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all shadow-sm"
                   value={editingRule.name || ''}
                   onChange={e => setEditingRule({...editingRule, name: e.target.value})}
                 />
               </div>
 
-              <div className="flex gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">If</label>
-                  <select 
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
-                    value={editingRule.type}
-                    onChange={e => setEditingRule({...editingRule, type: e.target.value as any})}
-                  >
-                    <option value="from">Sender Address</option>
-                    <option value="subject">Subject contains</option>
-                  </select>
+              <div className="p-4 bg-indigo-50 dark:bg-indigo-500/10 rounded-2xl border border-indigo-100 dark:border-indigo-500/20 space-y-4 shadow-sm">
+                <h4 className="font-bold text-indigo-900 dark:text-indigo-300 tracking-tight flex items-center gap-2"><span className="bg-indigo-200 dark:bg-indigo-600/50 text-indigo-700 dark:text-indigo-200 w-6 h-6 rounded-full flex items-center justify-center text-xs">1</span> Condition (IF)</h4>
+                <div className="flex gap-4 flex-col sm:flex-row">
+                  <div className="flex-[1]">
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Trigger</label>
+                    <select 
+                      className="w-full px-3 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                      value={editingRule.condition?.type}
+                      onChange={e => {
+                        const newType = e.target.value as RuleConditionType;
+                        setEditingRule({
+                          ...editingRule, 
+                          condition: { 
+                            ...editingRule.condition!, 
+                            type: newType, 
+                            matcher: newType === 'size' ? 'gt' : 'contains' 
+                          }
+                        });
+                      }}
+                    >
+                      <option value="subject">Subject</option>
+                      <option value="from">Sender</option>
+                      <option value="to">Recipient</option>
+                      <option value="body">Body (Text)</option>
+                      <option value="header">Custom Header</option>
+                      <option value="spam_score">Spam Score</option>
+                      <option value="size">Message Size</option>
+                    </select>
+                  </div>
+                  <div className="flex-[1]">
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Matcher</label>
+                    <select 
+                      className="w-full px-3 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                      value={editingRule.condition?.matcher}
+                      onChange={e => setEditingRule({
+                        ...editingRule, 
+                        condition: { ...editingRule.condition!, matcher: e.target.value as RuleMatcher }
+                      })}
+                    >
+                      {editingRule.condition?.type === 'size' ? (
+                        <>
+                          <option value="gt">Is greater than</option>
+                          <option value="lt">Is less than</option>
+                        </>
+                      ) : editingRule.condition?.type === 'spam_score' ? (
+                        <option value="gt">Is greater than or eq</option>
+                      ) : (
+                        <>
+                          <option value="contains">Contains</option>
+                          <option value="is">Is exactly</option>
+                          <option value="starts_with">Starts with</option>
+                          <option value="ends_with">Ends with</option>
+                          <option value="regex">Matches Regex</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
                 </div>
-                <div className="flex-[2]">
-                  <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Contains</label>
+
+                {editingRule.condition?.type === 'header' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Header Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. List-Id"
+                      className="w-full px-4 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                      value={editingRule.condition.headerName || ''}
+                      onChange={e => setEditingRule({
+                        ...editingRule, 
+                        condition: { ...editingRule.condition!, headerName: e.target.value }
+                      })}
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">
+                    {editingRule.condition?.type === 'size' ? 'Size (Bytes)' : 'Value'}
+                  </label>
                   <input
                     type="text"
-                    placeholder={editingRule.type === 'from' ? "email@example.com" : "invoice"}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
-                    value={editingRule.value || ''}
-                    onChange={e => setEditingRule({...editingRule, value: e.target.value})}
+                    placeholder={
+                      editingRule.condition?.type === 'size' ? "1024000 (for 1MB)" :
+                      editingRule.condition?.type === 'spam_score' ? "5.0" :
+                      editingRule.condition?.type === 'from' ? "mark@example.com" : "invoice"
+                    }
+                    className="w-full px-4 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                    value={editingRule.condition?.value || ''}
+                    onChange={e => setEditingRule({
+                      ...editingRule, 
+                      condition: { ...editingRule.condition!, value: e.target.value }
+                    })}
                   />
+                  {editingRule.condition?.type === 'regex' && (
+                    <p className="text-xs text-slate-500 mt-2 font-mono bg-white dark:bg-black p-2 rounded-lg border border-slate-100 dark:border-slate-800">
+                      Sieve Regex: use regular expressions like <span className="text-indigo-500">.*@spam\.com</span>
+                    </p>
+                  )}
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Then move to</label>
-                <select 
-                  className="w-full px-4 py-3 bg-slate-50 dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white mb-2"
-                  value={editingRule.action}
-                  onChange={e => setEditingRule({...editingRule, action: e.target.value as any})}
-                >
-                  <option value="Trash">Trash / Delete</option>
-                  <option value="Spam">Spam</option>
-                  <option value="Archive">Archive</option>
-                  <option value="Inbox">Inbox</option>
-                </select>
+              <div className="p-4 bg-emerald-50 dark:bg-emerald-500/10 rounded-2xl border border-emerald-100 dark:border-emerald-500/20 space-y-4 shadow-sm">
+                <h4 className="font-bold text-emerald-900 dark:text-emerald-300 tracking-tight flex items-center gap-2"><span className="bg-emerald-200 dark:bg-emerald-600/50 text-emerald-700 dark:text-emerald-200 w-6 h-6 rounded-full flex items-center justify-center text-xs">2</span> Action (THEN)</h4>
+                
+                <div className="flex gap-4 flex-col sm:flex-row">
+                  <div className="flex-[1]">
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Action</label>
+                    <select 
+                      className="w-full px-3 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                      value={editingRule.action?.type}
+                      onChange={e => setEditingRule({
+                        ...editingRule, 
+                        action: { ...editingRule.action!, type: e.target.value as RuleActionType }
+                      })}
+                    >
+                      <option value="move">Move to Folder</option>
+                      <option value="forward">Forward To</option>
+                      <option value="reject">Reject with Message</option>
+                      <option value="mark_read">Mark as Read</option>
+                      <option value="mark_spam">Move to Spam</option>
+                      <option value="add_flag">Add Flag</option>
+                    </select>
+                  </div>
+                </div>
+
+                {(editingRule.action?.type === 'move' || editingRule.action?.type === 'forward' || editingRule.action?.type === 'reject' || editingRule.action?.type === 'add_flag') && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">
+                      {editingRule.action?.type === 'move' ? 'Destination Folder' :
+                       editingRule.action?.type === 'forward' ? 'Forwarding Email' :
+                       editingRule.action?.type === 'add_flag' ? 'Flag Value' : 'Rejection Message'}
+                    </label>
+                    {editingRule.action?.type === 'move' ? (
+                      <select 
+                        className="w-full px-3 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                        value={editingRule.action?.value}
+                        onChange={e => setEditingRule({
+                          ...editingRule, 
+                          action: { ...editingRule.action!, value: e.target.value }
+                        })}
+                      >
+                        <option value="Trash">Trash</option>
+                        <option value="Spam">Spam</option>
+                        <option value="Archive">Archive</option>
+                        <option value="Inbox">Inbox</option>
+                        <option disabled>──────</option>
+                        {Array.from(new Set(mailboxes.map(m => m.name).filter(n => !['Trash', 'Spam', 'Junk Mail', 'Archive', 'Inbox'].includes(n)))).map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                        <option value="__custom__">+ Or type a custom folder name</option>
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        placeholder={
+                          editingRule.action?.type === 'forward' ? "assistant@domain.com" :
+                          editingRule.action?.type === 'add_flag' ? "\\\\Flagged or MyCustomTag" :
+                          "Your message was rejected."
+                        }
+                        className="w-full px-4 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                        value={editingRule.action?.value || ''}
+                        onChange={e => setEditingRule({
+                          ...editingRule, 
+                          action: { ...editingRule.action!, value: e.target.value }
+                        })}
+                      />
+                    )}
+
+                    {editingRule.action?.value === '__custom__' && editingRule.action.type === 'move' && (
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="Type new folder name..."
+                        className="w-full px-4 py-2.5 mt-3 bg-white dark:bg-black border border-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.1)] rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white"
+                        onChange={e => setEditingRule({
+                          ...editingRule, 
+                          action: { ...editingRule.action!, value: e.target.value }
+                        })}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
 
-              <button 
-                onClick={() => {
-                  if (!editingRule.name || !editingRule.value) {
-                     toast.error("Please fill required fields");
-                     return;
-                  }
-                  const newRule: CustomRule = {
-                     id: editingRule.id || Math.random().toString(36).substring(7),
-                     name: editingRule.name,
-                     active: editingRule.active ?? true,
-                     type: editingRule.type as any,
-                     value: editingRule.value,
-                     action: editingRule.action as any,
-                  };
-                  
-                  let updatedRules: CustomRule[];
-                  if (editingRule.id) {
-                     updatedRules = customRules.map(r => r.id === newRule.id ? newRule : r);
-                  } else {
-                     updatedRules = [...customRules, newRule];
-                  }
-                  
-                  setCustomRules(updatedRules);
-                  localStorage.setItem('webmail_custom_rules', JSON.stringify(updatedRules));
-                  compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, updatedRules);
-                  setIsRuleModalOpen(false);
-                }}
-                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]"
-              >
-                Save Sieve Rule
-              </button>
+              <div className="pt-2">
+                <button 
+                  onClick={() => {
+                    if (!editingRule.name || (!editingRule.condition?.value && editingRule.condition?.type !== 'size') || !editingRule.action?.value) {
+                       toast.error("Please fill all required fields");
+                       return;
+                    }
+                    if (editingRule.action.value === '__custom__') {
+                       toast.error("Please specify a directory name");
+                       return;
+                    }
+                    const newRule: CustomRule = {
+                       id: editingRule.id || Math.random().toString(36).substring(7),
+                       name: editingRule.name,
+                       active: editingRule.active ?? true,
+                       condition: editingRule.condition as CustomRuleCondition,
+                       action: editingRule.action as CustomRuleAction,
+                    };
+                    
+                    let updatedRules: CustomRule[];
+                    if (editingRule.id) {
+                       updatedRules = customRules.map(r => r.id === newRule.id ? newRule : r);
+                    } else {
+                       updatedRules = [...customRules, newRule];
+                    }
+                    
+                    setCustomRules(updatedRules);
+                    localStorage.setItem('webmail_custom_rules', JSON.stringify(updatedRules));
+                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, updatedRules);
+                    setIsRuleModalOpen(false);
+                  }}
+                  className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                >
+                  <Save className="w-5 h-5" />
+                  Save Sieve Rule
+                </button>
+              </div>
             </div>
           </div>
         </div>
