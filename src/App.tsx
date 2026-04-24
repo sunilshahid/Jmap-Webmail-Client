@@ -3774,7 +3774,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         </div>
 
                         <div className="mt-8 overflow-x-auto max-w-none">
-                          <HtmlEmailViewer htmlContent={DOMPurify.sanitize(selectedEmail.body || "<em>No content</em>")} />
+                          <HtmlEmailViewer htmlContent={DOMPurify.sanitize(selectedEmail.body || "<em>No content</em>", { WHOLE_DOCUMENT: true, ADD_TAGS: ['style', 'head', 'html', 'meta', 'title', 'body'], ADD_ATTR: ['target', 'style', 'class'] })} />
                         </div>
 
                         {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
