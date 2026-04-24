@@ -47,6 +47,15 @@ export class JmapClient {
       methodCalls: methodCalls
     };
 
+    const isDevMode = typeof window !== 'undefined' && localStorage.getItem("webmail_developer_mode") === "true";
+    if (isDevMode) {
+      console.log("JMAP REQUEST: ", {
+        serverUrl: this.account.serverUrl,
+        username: this.account.username,
+        payload
+      });
+    }
+
     let res: Response;
     try {
       res = await fetch('/api/jmap/api', {
@@ -77,7 +86,12 @@ export class JmapClient {
       }
       throw new Error(errorMessage);
     }
-    return await res.json();
+    
+    const data = await res.json();
+    if (isDevMode) {
+      console.log("JMAP RESPONSE: ", data);
+    }
+    return data;
   }
 
   request(methodCalls: any[], customCapabilities?: string[]): Promise<any> {
@@ -552,7 +566,7 @@ export class JmapClient {
             keywords: { "$seen": true },
             mailboxIds: { [sentMailbox.id]: true },
             bodyValues: { "1": { value: body } },
-            textBody: [{ partId: "1" }],
+            ...(/<[a-z][\s\S]*>/i.test(body) ? { htmlBody: [{ partId: "1", type: "text/html" }] } : { textBody: [{ partId: "1", type: "text/plain" }] }),
             attachments: attachments || []
           },
         },
@@ -619,7 +633,7 @@ export class JmapClient {
       keywords: { "$draft": true, "$seen": true },
       mailboxIds: { [draftsMailbox.id]: true },
       bodyValues: { "1": { value: body } },
-      textBody: [{ partId: "1" }],
+      ...(/<[a-z][\s\S]*>/i.test(body) ? { htmlBody: [{ partId: "1", type: "text/html" }] } : { textBody: [{ partId: "1", type: "text/plain" }] }),
       attachments: attachments || []
     };
 
@@ -661,14 +675,17 @@ export class JmapClient {
     return res.methodResponses?.[0]?.[1]?.list?.[0];
   }
 
-  async setVacationResponse(config: { isEnabled: boolean, textBody: string, subject?: string }): Promise<void> {
+  async setVacationResponse(config: { isEnabled: boolean, textBody?: string, htmlBody?: string, subject?: string, fromDate?: string | null, toDate?: string | null }): Promise<void> {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:vacationresponse"];
     
     // Construct strict payload. If turning off, only send isEnabled: false.
     const updatePayload: any = { isEnabled: config.isEnabled };
     if (config.isEnabled) {
-      if (config.textBody !== undefined) updatePayload.textBody = config.textBody;
+      if (config.htmlBody) updatePayload.htmlBody = config.htmlBody;
+      else if (config.textBody !== undefined) updatePayload.textBody = config.textBody;
       if (config.subject !== undefined) updatePayload.subject = config.subject;
+      if (config.fromDate !== undefined) updatePayload.fromDate = config.fromDate ? new Date(config.fromDate).toISOString() : null;
+      if (config.toDate !== undefined) updatePayload.toDate = config.toDate ? new Date(config.toDate).toISOString() : null;
     }
 
     await this.call([
@@ -699,6 +716,7 @@ export class JmapClient {
     ]);
   }
 
+ 
   async updateSieveScript(scriptContent: string): Promise<void> {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:sieve"];
     const sieveAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:sieve"] || this.account.accountId || "p";

@@ -5,7 +5,7 @@ import {
   Reply, Forward, X, Edit3, Mail, LogOut, Loader2, Server,
   Calendar, Users, RefreshCw, Lock, Clock, Key, Shield, Plus, ExternalLink,
   Sparkles, Download, Upload, Bell, Check, MailCheck, Sun, Filter, ArrowLeft, Paperclip,
-  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3
+  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "./lib/utils";
@@ -13,6 +13,10 @@ import { Toaster, toast } from 'sonner';
 import { Mailbox, Email, Identity, Contact, Event, Account } from "./lib/types";
 import { JmapClient } from "./lib/jmap-client";
 import DOMPurify from 'dompurify';
+import { getTranslation } from "./lib/i18n";
+
+// Use translation dictionary directly
+const t = getTranslation;
 
 export type RuleConditionType = 'subject' | 'from' | 'to' | 'body' | 'header' | 'size' | 'spam_score';
 export type RuleMatcher = 'contains' | 'is' | 'regex' | 'starts_with' | 'ends_with' | 'gt' | 'lt';
@@ -333,8 +337,52 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
   );
 }
 
+function HtmlEmailViewer({ htmlContent }: { htmlContent: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  useEffect(() => {
+    if (iframeRef.current) {
+      const doc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
+      if (doc) {
+        doc.open();
+        doc.write(htmlContent);
+        doc.close();
+        
+        const attachTheme = () => {
+          const isDark = document.documentElement.classList.contains('dark');
+          if (doc.body) {
+            doc.body.style.color = isDark ? '#f8fafc' : '#0f172a';
+            doc.body.style.fontFamily = 'Inter, system-ui, sans-serif';
+            doc.body.style.lineHeight = '1.6';
+            doc.body.style.wordBreak = 'break-word';
+            doc.body.style.margin = '0';
+          }
+        };
+        attachTheme();
+        
+        // Auto-resize
+        setTimeout(() => {
+          if (iframeRef.current && doc.body) {
+             iframeRef.current.style.height = `${doc.body.scrollHeight}px`;
+          }
+        }, 100);
+      }
+    }
+  }, [htmlContent]);
+
+  return (
+    <iframe 
+      ref={iframeRef} 
+      className="w-full border-none transition-all duration-300" 
+      title="Email Content"
+      sandbox="allow-same-origin allow-popups"
+    />
+  );
+}
+
 function AttachmentRenderer({ attachment, client }: { attachment: any, client: JmapClient, key?: any }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
+
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -362,7 +410,7 @@ function AttachmentRenderer({ attachment, client }: { attachment: any, client: J
     return (
       <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-full animate-pulse mt-2">
         <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
-        <span className="text-xs text-slate-500 font-medium">Fetching secure blob...</span>
+                  <span className="text-xs text-slate-500 font-medium">{t(language, 'loading')}</span>
       </div>
     );
   }
@@ -399,6 +447,29 @@ function AttachmentRenderer({ attachment, client }: { attachment: any, client: J
       <span className="text-[10px] text-slate-400 font-normal">({Math.round(attachment.size / 1024)} KB)</span>
     </a>
   );
+}
+
+function getMailboxDisplayName(mb: any, language: string) {
+  if (!mb) return getTranslation(language, "inbox");
+  const knownRoles = ["inbox", "drafts", "sent", "trash", "archive", "junk", "templates"];
+  const knownNames = ["important", "snoozed", "muted", "promotions", "social", "updates", "reports", "scheduled", "outbox"];
+
+  if (mb.role && knownRoles.includes(mb.role.toLowerCase())) {
+     if (mb.role.toLowerCase() === 'junk') return getTranslation(language, "spam");
+     return getTranslation(language, mb.role.toLowerCase());
+  }
+  
+  if (mb.name) {
+     const lowerName = mb.name.toLowerCase();
+     if (knownRoles.includes(lowerName)) {
+       if (lowerName === 'junk') return getTranslation(language, "spam");
+       return getTranslation(language, lowerName);
+     }
+     if (knownNames.includes(lowerName)) {
+       return getTranslation(language, lowerName);
+     }
+  }
+  return mb.name;
 }
 
 export default function App() {
@@ -691,6 +762,12 @@ export default function App() {
 }
 
 function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitchAccount, onAddAccount, isDarkMode, setIsDarkMode }: any) {
+  const [isDeveloperMode, setIsDeveloperMode] = useState(() => {
+    return localStorage.getItem("webmail_developer_mode") === "true";
+  });
+  const [isBetaFeaturesEnabled, setIsBetaFeaturesEnabled] = useState(() => {
+    return localStorage.getItem("webmail_beta_features") === "true";
+  });
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [emails, setEmails] = useState<Email[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
@@ -706,6 +783,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isComposeOpen, setIsComposeOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [language, setLanguage] = useState(() => localStorage.getItem('webmail_language') || "English (US)");
+  const [isLanguageDropdownOpen, setIsLanguageDropdownOpen] = useState(false);
+  const [timezone, setTimezone] = useState(() => localStorage.getItem('webmail_timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [isTimezoneDropdownOpen, setIsTimezoneDropdownOpen] = useState(false);
   const [contextMenuEmail, setContextMenuEmail] = useState<Email | null>(null);
   const [isEmailActionsOpen, setIsEmailActionsOpen] = useState(false);
   const [isContactModalOpen, setIsContactModalOpen] = useState(false);
@@ -715,7 +796,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [contactSuggestions, setContactSuggestions] = useState<any[]>([]);
   const [newContact, setNewContact] = useState({ firstName: '', lastName: '', email: '', emailType: 'private', phone: '', phoneType: 'private', organization: '', notes: '' });
   const [contactErrors, setContactErrors] = useState<Record<string, string>>({});
-  const [newEvent, setNewEvent] = useState({ title: '', description: '', location: '', startDate: format(new Date(), 'yyyy-MM-dd'), startTime: '09:00', endDate: format(new Date(), 'yyyy-MM-dd'), endTime: '10:00', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+  const [newEvent, setNewEvent] = useState({ title: '', description: '', location: '', startDate: format(new Date(), 'yyyy-MM-dd'), startTime: '09:00', endDate: format(new Date(), 'yyyy-MM-dd'), endTime: '10:00', timeZone: timezone });
   const [eventErrors, setEventErrors] = useState<Record<string, string>>({});
   const [contactSearchQuery, setContactSearchQuery] = useState("");
   const [eventSearchQuery, setEventSearchQuery] = useState("");
@@ -726,8 +807,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [vacationEnabled, setVacationEnabled] = useState(false);
   const [vacationSubject, setVacationSubject] = useState("");
   const [vacationText, setVacationText] = useState("");
+  const [vacationFromDate, setVacationFromDate] = useState("");
+  const [vacationToDate, setVacationToDate] = useState("");
   const [isSavingVacation, setIsSavingVacation] = useState(false);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date | null>(null);
@@ -795,6 +879,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [filterSocial, setFilterSocial] = useState(() => localStorage.getItem('webmail_filter_social') === 'true');
   const [filterUpdates, setFilterUpdates] = useState(() => localStorage.getItem('webmail_filter_updates') === 'true');
   const [filterReports, setFilterReports] = useState(() => localStorage.getItem('webmail_filter_reports') === 'true');
+  const [filterOnlyContacts, setFilterOnlyContacts] = useState(() => localStorage.getItem('webmail_filter_only_contacts') === 'true');
   const [customRules, setCustomRules] = useState<CustomRule[]>(() => {
     const saved = localStorage.getItem('webmail_custom_rules');
     return saved ? JSON.parse(saved) : [];
@@ -806,9 +891,12 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     condition: { type: 'subject', matcher: 'contains', value: '' },
     action: { type: 'move', value: 'Trash' }
   });
+  
+  const [vacationData, setVacationData] = useState<any>(null);
 
-  const compileAndPushSieve = async (promo: boolean, social: boolean, updates: boolean, reports: boolean, rules: CustomRule[] = customRules) => {
+  const compileAndPushSieve = async (promo: boolean, social: boolean, updates: boolean, reports: boolean, onlyContacts: boolean, rules: CustomRule[] = customRules) => {
     if (!credentials) return;
+
     
     try {
       const client = new JmapClient(credentials);
@@ -850,6 +938,26 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       const mboxArchive = mailboxes.find(m => m.role === 'archive')?.name || "Archive";
 
       let script = 'require ["fileinto", "special-use", "envelope", "body", "reject", "regex", "relational", "comparator-i;ascii-numeric", "copy", "imap4flags"];\n\n';
+
+      if (onlyContacts) {
+        try {
+          const contacts = await client.getContacts();
+          let contactEmails: string[] = [];
+          contacts.forEach(c => {
+            if (c.emails) {
+              Object.values(c.emails).forEach((e: any) => {
+                if (e.address) contactEmails.push(e.address);
+              });
+            }
+          });
+          if (contactEmails.length > 0) {
+            const emailsStr = contactEmails.map(e => `"${e}"`).join(", ");
+            script += `if not address :is "from" [${emailsStr}] { fileinto :specialuse "\\\\Junk" "${mboxJunk}"; stop; }\n`;
+          }
+        } catch (e) {
+          console.error("Failed to fetch contacts for sieve compilation", e);
+        }
+      }
       
       rules.filter(r => r.active).forEach(rule => {
         let condition = '';
@@ -976,7 +1084,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
             keywords: { "$draft": true, "$seen": true },
             subject: tpl.subject || "No Subject",
             bodyValues: { "1": { value: tpl.body || "" } },
-            textBody: [{ partId: "1" }]
+            ...(/<[a-z][\s\S]*>/i.test(tpl.body || "") ? { htmlBody: [{ partId: "1", type: "text/html" }] } : { textBody: [{ partId: "1", type: "text/plain" }] })
           };
         });
 
@@ -1032,6 +1140,26 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [soundEffectsEnabled, setSoundEffectsEnabled] = useState(() => {
     return localStorage.getItem('webmail_sound_effects') === 'true';
   });
+
+  const previousInboxUnreadRef = useRef<number | null>(null);
+
+  const triggerNewEmailNotification = useCallback(() => {
+    if (soundEffectsEnabled) {
+      const audio = new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=message-incoming-132126.mp3');
+      audio.volume = 0.8;
+      audio.play().catch(e => console.log("Audio play blocked", e));
+    }
+    if (notificationsEnabled && "Notification" in window && Notification.permission === "granted") {
+      try {
+        new Notification("New Email", {
+          body: "You have a new message in your Inbox.",
+        });
+      } catch (e) {
+        console.error("Failed to show notification:", e);
+      }
+    }
+  }, [soundEffectsEnabled, notificationsEnabled]);
+
   const currentTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   // Delayed Send State
@@ -1062,6 +1190,14 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   useEffect(() => {
     localStorage.setItem('webmail_settings_section', isSettingsSection);
   }, [isSettingsSection]);
+
+  useEffect(() => {
+    localStorage.setItem('webmail_language', language);
+  }, [language]);
+
+  useEffect(() => {
+    localStorage.setItem('webmail_timezone', timezone);
+  }, [timezone]);
 
   useEffect(() => {
     localStorage.setItem('webmail_sound_effects', soundEffectsEnabled.toString());
@@ -1449,7 +1585,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
       setEvents(prev => [...prev, createdEvent]);
       setIsEventModalOpen(false);
-      setNewEvent({ title: '', description: '', location: '', startDate: format(new Date(), 'yyyy-MM-dd'), startTime: '09:00', endDate: format(new Date(), 'yyyy-MM-dd'), endTime: '10:00', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+      setNewEvent({ title: '', description: '', location: '', startDate: format(new Date(), 'yyyy-MM-dd'), startTime: '09:00', endDate: format(new Date(), 'yyyy-MM-dd'), endTime: '10:00', timeZone: timezone });
       setEventErrors({});
       toast.success("Event created successfully");
     } catch (error: any) {
@@ -1893,6 +2029,37 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
   };
 
+  const handleEmojiReply = async (email: Email, emoji: string) => {
+    if (!credentials) return;
+    try {
+      setIsEmojiPickerOpen(false);
+      const client = new JmapClient(credentials);
+      const identity = identities[0];
+      if (!identity) throw new Error("No identity found");
+      
+      const toAddresses = [email.from.email];
+      const replySubject = `Re: ${email.subject.replace(/^Re:\s*/i, '')}`;
+      const replyBody = `<p style="font-size: 24px; margin: 0;">${emoji}</p><br/><br/><div class="gmail_quote">On ${format(new Date(email.date), 'MMM d, yyyy')} at ${format(new Date(email.date), 'h:mm a')}, ${email.from.name || email.from.email} wrote:<br><blockquote style="margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex">${email.preview}...</blockquote></div>`;
+
+      await client.sendEmail(
+        toAddresses,
+        replySubject,
+        replyBody,
+        undefined,
+        undefined,
+        identity.id,
+        identity.email,
+        undefined,
+        identity.name,
+        []
+      );
+      
+      toast.success(`Replied to ${email.from.name || email.from.email} with ${emoji}`);
+    } catch (e: any) {
+      toast.error(`Failed to send emoji reply: ${e.message}`);
+    }
+  };
+
   // Track active app switches for reset logic
   useEffect(() => {
     if (activeApp === 'calendar') {
@@ -1914,7 +2081,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         if (vacation) {
           setVacationEnabled(vacation.isEnabled);
           setVacationSubject(vacation.subject || "");
-          setVacationText(vacation.textBody || "");
+          setVacationText(vacation.htmlBody || vacation.textBody || "");
+          if (vacation.fromDate) {
+            setVacationFromDate(vacation.fromDate.substring(0, 16));
+          }
+          if (vacation.toDate) {
+            setVacationToDate(vacation.toDate.substring(0, 16));
+          }
         }
       } catch (e) {
         console.error("Failed to load vacation state", e);
@@ -1960,6 +2133,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       });
 
       setMailboxes(mapped);
+      
+      const inboxMailbox = mapped.find(m => m.role === 'inbox');
+      if (inboxMailbox) {
+         if (previousInboxUnreadRef.current !== null && inboxMailbox.unread > previousInboxUnreadRef.current) {
+            triggerNewEmailNotification();
+         }
+         previousInboxUnreadRef.current = inboxMailbox.unread;
+      }
+      
       if (mapped.length > 0 && !selectedMailbox) {
         setSelectedMailbox(mapped.find((m: any) => m.icon === 'Inbox')?.id || mapped[0].id);
       }
@@ -1969,7 +2151,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       toast.error(err instanceof Error ? err.message : String(err));
       throw err;
     }
-  }, [credentials, selectedMailbox]);
+  }, [credentials, selectedMailbox, triggerNewEmailNotification]);
 
   useEffect(() => {
     fetchMailboxes();
@@ -2119,7 +2301,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               keywords: { "$draft": true, "$seen": true },
               subject: subject || "No Subject",
               bodyValues: { "1": { value: emailBody || "" } },
-              textBody: [{ partId: "1" }]
+              ...(/<[a-z][\s\S]*>/i.test(emailBody || "") ? { htmlBody: [{ partId: "1", type: "text/html" }] } : { textBody: [{ partId: "1", type: "text/plain" }] })
             }
           },
           ...(editingTemplateId ? { destroy: [editingTemplateId] } : {})
@@ -2330,12 +2512,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
   };
 
-  const handleMoveEmail = async (emailId: string, targetMailboxRole: string) => {
+  const handleMoveEmail = async (emailId: string, targetMailboxRole: string, emailObject?: Email) => {
     if (!credentials) return;
-    const targetMailbox = mailboxes.find(m => m.role === targetMailboxRole) || mailboxes.find(m => m.name.toLowerCase().includes(targetMailboxRole));
+    let targetMailbox = mailboxes.find(m => m.role === targetMailboxRole) || mailboxes.find(m => m.name.toLowerCase().includes(targetMailboxRole));
+    
     if (!targetMailbox) {
-      toast.error(`Target mailbox ${targetMailboxRole} not found`);
-      return;
+      // Try to create or ensure the custom mailbox
+      const mbId = await ensureCustomMailbox(targetMailboxRole);
+      if (mbId) {
+        // Fetch mailboxes again locally or trust mbId
+        targetMailbox = mailboxes.find(m => m.id === mbId) || { id: mbId, name: targetMailboxRole, role: '' } as any;
+      }
+      if (!targetMailbox) {
+        toast.error(`Target mailbox ${targetMailboxRole} not found`);
+        return;
+      }
     }
 
     const client = new JmapClient(credentials);
@@ -2354,6 +2545,23 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         setSelectedEmail(null);
       }
       toast.success(`Moved to ${targetMailbox.name}`);
+      
+      const currentFolder = mailboxes.find(m => m.id === selectedMailbox);
+      // Remove sieve rule if moving back to Inbox from Muted/Important/Snoozed/etc
+      if (targetMailboxRole === 'inbox' && emailObject && currentFolder && ['muted', 'important', 'snoozed', 'spam', 'junk'].includes(currentFolder.name.toLowerCase())) {
+        const fromEmail = emailObject.from?.[0]?.email;
+        if (fromEmail) {
+          const ruleToDelete = customRules.find(r => r.name === `${currentFolder.name}: ${fromEmail}`);
+          if (ruleToDelete) {
+             const updatedRules = customRules.filter(r => r.id !== ruleToDelete.id);
+             setCustomRules(updatedRules);
+             localStorage.setItem('webmail_custom_rules', JSON.stringify(updatedRules));
+             await compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, filterOnlyContacts, updatedRules);
+             toast.success(`Removed rule for future emails from ${fromEmail}`);
+          }
+        }
+      }
+      
       // Update unread counts
       fetchMailboxes();
     } catch (err) {
@@ -2388,7 +2596,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
   };
 
-  const handleArchiveEmail = (emailId: string) => handleMoveEmail(emailId, 'archive');
+  const handleArchiveEmail = (email: Email) => handleMoveEmail(email.id, 'archive', email);
   const handleToggleStar = (email: Email) => handleUpdateEmailKeywords(email.id, { "$flagged": !email.starred });
   const handleBulkUpdateEmailKeywords = async (emailIds: string[], keywords: Record<string, boolean | null>) => {
     if (!credentials || emailIds.length === 0) return;
@@ -2511,8 +2719,105 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
   const handleMarkAsRead = (emailId: string) => handleUpdateEmailKeywords(emailId, { "$seen": true });
   const handleMarkAsUnread = (emailId: string) => handleUpdateEmailKeywords(emailId, { "$seen": null });
-  const handleMoveToJunk = (emailId: string) => handleMoveEmail(emailId, 'junk');
-  const handleMoveToInbox = (emailId: string) => handleMoveEmail(emailId, 'inbox');
+  const handleMoveToJunk = (email: Email) => handleMoveEmail(email.id, 'junk', email);
+  const handleMoveToInbox = (email: Email) => handleMoveEmail(email.id, 'inbox', email);
+
+  const ensureCustomMailbox = async (name: string) => {
+    if (!credentials) return null;
+    const lowerName = name.toLowerCase();
+    
+    // First, map known roles
+    let roleToCheck = '';
+    if (lowerName === 'spam' || lowerName === 'junk') roleToCheck = 'junk';
+    else if (lowerName === 'trash' || lowerName === 'bin') roleToCheck = 'trash';
+    else if (lowerName === 'archive') roleToCheck = 'archive';
+    else if (lowerName === 'inbox') roleToCheck = 'inbox';
+
+    let mb = mailboxes.find(m => 
+      m.name.toLowerCase() === lowerName || 
+      (roleToCheck && m.role === roleToCheck)
+    );
+    if (mb) return mb.id;
+    
+    const client = new JmapClient(credentials);
+    try {
+      const res = await client.call([
+        ["Mailbox/set", { accountId: credentials.accountId, create: { "newFolder": { name } } }, "0"]
+      ]);
+      const created = res.methodResponses[0][1]?.created?.newFolder;
+      if (created) {
+        await fetchMailboxes();
+        return created.id;
+      }
+    } catch (e) {
+      console.error("Failed to create mailbox", e);
+    }
+    return null;
+  };
+
+  const handleCreateRuleAndMove = async (email: Email, targetFolderName: string) => {
+    if (!credentials) return;
+    const mbId = await ensureCustomMailbox(targetFolderName);
+    if (!mbId) {
+      toast.error(`Failed to ensure ${targetFolderName} folder exists`);
+      return;
+    }
+    
+    const client = new JmapClient(credentials);
+    try {
+      await client.call([
+        ["Email/set", {
+          accountId: credentials.accountId,
+          update: { [email.id]: { mailboxIds: { [mbId]: true } } }
+        }, "0"]
+      ]);
+      setEmails(prev => prev.filter(e => e.id !== email.id));
+      if (selectedEmail?.id === email.id) setSelectedEmail(null);
+      toast.success(`Moved to ${targetFolderName} & created rule`);
+      
+      const fromEmail = email.from?.[0]?.email;
+      if (fromEmail) {
+        // Find if rule already exists
+        if (!customRules.find(r => r.name === `${targetFolderName}: ${fromEmail}`)) {
+          const newRule: CustomRule = {
+            id: 'rule_' + Date.now(),
+            name: `${targetFolderName}: ${fromEmail}`,
+            active: true,
+            condition: { type: 'from', matcher: 'is', value: fromEmail },
+            action: { type: 'move', value: targetFolderName }
+          };
+          const updatedRules = [...customRules, newRule];
+          setCustomRules(updatedRules);
+          localStorage.setItem('webmail_custom_rules', JSON.stringify(updatedRules));
+          await compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, filterOnlyContacts, updatedRules);
+        }
+      }
+      await fetchMailboxes();
+    } catch (e) {
+      toast.error(`Failed to move to ${targetFolderName}`);
+    }
+  };
+
+  const handleDeleteMailbox = async (mailboxId: string, name: string) => {
+    if (!credentials) return;
+    
+    const confirmDelete = window.confirm(`Are you sure you want to permanently delete the folder "${name}"?`);
+    if (!confirmDelete) return;
+
+    const client = new JmapClient(credentials);
+    try {
+      await client.call([
+        ["Mailbox/set", { accountId: credentials.accountId, destroy: [mailboxId], onDestroyRemoveEmails: true }, "0"]
+      ]);
+      await fetchMailboxes();
+      if (selectedMailbox === mailboxId) {
+        setSelectedMailbox(mailboxes[0]?.id);
+      }
+      toast.success(`Deleted folder "${name}"`);
+    } catch (e: any) {
+      toast.error(`Failed to delete folder. It might contain subfolders. Error: ${e.message}`);
+    }
+  };
 
   return (
     <div className="flex h-screen w-full bg-slate-50 dark:bg-black text-slate-900 dark:text-slate-100 overflow-hidden font-sans transition-colors duration-200 selection:bg-indigo-100 dark:selection:bg-indigo-500/30">
@@ -2559,7 +2864,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               className="w-full flex items-center justify-center gap-3 px-4 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-[14px] font-bold text-lg shadow-sm transition-all duration-200 active:scale-[0.98]"
             >
               <Edit3 className="w-5 h-5" />
-              Create
+              {t(language, 'compose')}
             </button>
           </div>
           {vacationEnabled && (
@@ -2581,16 +2886,27 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
             </div>
           )}
           <div className="px-4 mt-2 mb-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-            Folders
+            {getTranslation(language, "folders")}
           </div>
           <ul className="space-y-1.5 px-3 mb-6">
+            {isBetaFeaturesEnabled && (
+              <li className="mb-2">
+                <button
+                  className="w-full text-left px-4 py-2 rounded-xl flex items-center gap-3 transition-all duration-200 bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 group"
+                  onClick={() => toast.info("Beta Dashboard coming soon!")}
+                >
+                  <Sparkles className="w-5 h-5 text-amber-500 dark:text-amber-400" />
+                  <span className="text-[15px] font-bold tracking-wide">Beta Dashboard</span>
+                  <span className="ml-auto text-[10px] font-black tracking-wider uppercase bg-amber-500/20 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full">New</span>
+                </button>
+              </li>
+            )}
             {(mailboxes || []).map((mb) => {
               let Icon = iconMap[mb.icon] || Mail;
-              let displayName = mb.name;
+              const displayName = getMailboxDisplayName(mb, language);
 
-              // Clean up icons and rename Junk to Spam
+              // Clean up icons
               if (mb.role === 'junk') {
-                displayName = 'Spam';
                 Icon = ShieldAlert;
               } else if (mb.role === 'trash') {
                 Icon = Trash2;
@@ -2598,18 +2914,28 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 Icon = FileEdit;
               } else if (mb.role === 'inbox') {
                 Icon = Inbox;
-              } else if (mb.role === 'archive') {
+              } else if (mb.role === 'archive' || mb.name.toLowerCase() === 'archive') {
                 Icon = Archive;
               } else if (mb.role === 'sent') {
                 Icon = Send;
+              } else if (mb.role === 'outbox' || mb.name.toLowerCase() === 'outbox') {
+                Icon = Send;
               } else if (mb.name.toLowerCase().includes('report')) {
                 Icon = BarChart3;
+              } else if (mb.name.toLowerCase() === 'muted') {
+                Icon = BellOff;
+              } else if (mb.name.toLowerCase() === 'important') {
+                Icon = Star;
+              } else if (mb.name.toLowerCase() === 'snoozed') {
+                Icon = Clock;
               }
 
               const isSelected = selectedMailbox === mb.id;
+              const isCustomFolder = !mb.role && !['inbox', 'drafts', 'sent', 'trash', 'junk', 'archive', 'outbox'].includes(mb.name.toLowerCase());
+
               return (
                 <React.Fragment key={mb.id}>
-                  <li>
+                  <li className="relative group/folder">
                     <button
                       onClick={() => {
                         setActiveApp('mail');
@@ -2623,22 +2949,23 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-[#11131f]"
                       )}
                     >
-                      <div className="flex items-center gap-3.5">
+                      <div className="flex items-center gap-3.5 pr-2 truncate">
                         <div className={cn(
-                          "w-9 h-9 rounded-xl flex items-center justify-center transition-colors",
+                          "w-9 h-9 rounded-xl flex items-center justify-center transition-colors shrink-0",
                           isSelected && activeApp === 'mail'
                             ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20" 
                             : "bg-slate-200/80 dark:bg-[#11131f] text-slate-500 dark:text-slate-400 group-hover:bg-slate-300 dark:group-hover:bg-[#161827]"
                         )}>
                           <Icon className="w-5 h-5" />
                         </div>
-                        <div className="flex flex-col items-start leading-tight">
-                          <span className="text-[17px] font-bold tracking-wide">{displayName}</span>
+                        <div className="flex flex-col items-start leading-tight truncate">
+                          <span className="text-[17px] font-bold tracking-wide truncate">{displayName}</span>
                           <span className="text-[11px] text-slate-500 font-medium mt-0.5">
                             {mb.unread} unread • {mb.totalEmails || 0} total
                           </span>
                         </div>
                       </div>
+                      
                     </button>
                   </li>
                   
@@ -2667,7 +2994,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           )}>
                             <Clock className="w-5 h-5" />
                           </div>
-                          <span className="text-[17px] font-bold tracking-wide">Scheduled</span>
+                          <span className="text-[17px] font-bold tracking-wide">{getTranslation(language, "scheduled")}</span>
                         </div>
                         {Object.keys(scheduledJobs).length > 0 && (
                           <span className={cn(
@@ -2692,17 +3019,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           </div>
           <ul className="space-y-1.5 px-3">
             {[
-              { id: 'mail', name: 'Mail', icon: Mail },
-              { id: 'contacts', name: 'Contacts', icon: Users },
-              { id: 'calendar', name: 'Calendar', icon: Calendar },
-              { id: 'settings', name: 'Settings', icon: Settings },
+              { id: 'mail', name: t(language, 'mail'), icon: Mail },
+              { id: 'contacts', name: t(language, 'contacts'), icon: Users },
+              { id: 'calendar', name: t(language, 'calendar'), icon: Calendar },
+              { id: 'settings', name: t(language, 'settings'), icon: Settings },
             ].map((app) => {
               const Icon = app.icon;
               const isSelected = activeApp === app.id;
               return (
                 <li key={app.id}>
                   <button 
-                    onClick={() => { setActiveApp(app.id as any); setIsSidebarOpen(false); }}
+                    onClick={() => { 
+                      setActiveApp(app.id as any); 
+                      if (app.id === 'settings') setIsSettingsSection('account');
+                      setIsSidebarOpen(false); 
+                    }}
                     className={cn(
                       "w-full flex items-center gap-3.5 px-3 py-2.5 rounded-2xl text-[17px] font-bold transition-all duration-200 tracking-wide",
                       isSelected 
@@ -2758,10 +3089,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 type="text"
                 placeholder={
                   activeApp === 'contacts' 
-                    ? "Search contacts..." 
+                    ? t(language, 'searchInContacts') 
                     : activeApp === 'calendar' 
-                      ? "Search events..." 
-                      : "Search in mail"
+                      ? t(language, 'searchInCalendar') 
+                      : t(language, 'searchInMail')
                 }
                 value={
                   activeApp === 'contacts' 
@@ -2966,8 +3297,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <h2 className="font-bold text-lg text-slate-800 dark:text-white flex items-center gap-2 truncate max-w-[200px] sm:max-w-none">
                             {selectedMailbox === 'virtual-scheduled' && <Clock className="w-5 h-5 text-indigo-500" />}
                             {selectedMailbox === 'virtual-scheduled' 
-                              ? 'Scheduled' 
-                              : (mailboxes.find(m => m.id === selectedMailbox)?.name || "Inbox")}
+                              ? getTranslation(language, "scheduled") 
+                              : getMailboxDisplayName(mailboxes.find(m => m.id === selectedMailbox), language)}
                           </h2>
                           <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
                             {(() => {
@@ -3010,8 +3341,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       <div className="w-16 h-16 bg-slate-50 dark:bg-[#11131f] rounded-full flex items-center justify-center mx-auto mb-4">
                         <Inbox className="w-8 h-8 text-slate-300 dark:text-slate-600" />
                       </div>
-                      <p className="font-medium">{searchQuery ? "No matching messages" : "No messages found"}</p>
-                      <p className="text-sm mt-1 text-slate-400 dark:text-slate-500">You're all caught up!</p>
+                      <p className="font-medium">{searchQuery ? (t(language, 'noMatchingMessages') === 'noMatchingMessages' ? 'No matching messages' : t(language, 'noMatchingMessages')) : t(language, 'noMessages')}</p>
+                      <p className="text-sm mt-1 text-slate-400 dark:text-slate-500">{t(language, 'youReAllCaughtUp') === 'youReAllCaughtUp' ? "You're all caught up!" : t(language, 'youReAllCaughtUp')}</p>
                     </div>
                   ) : (
                     <ul className="divide-y divide-slate-100 dark:divide-slate-800/50">
@@ -3112,7 +3443,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                               <Bell className="w-4 h-4" /> Mark as unread
                                             </button>
                                             <button 
-                                              onClick={(e) => { e.stopPropagation(); handleArchiveEmail(email.id); setContextMenuEmail(null); }}
+                                              onClick={(e) => { e.stopPropagation(); handleArchiveEmail(email); setContextMenuEmail(null); }}
                                               className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2 font-medium"
                                             >
                                               <Archive className="w-4 h-4" /> Archive
@@ -3124,16 +3455,17 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                               <Trash2 className="w-4 h-4" /> Delete
                                             </button>
                                             <div className="h-px bg-slate-100 dark:bg-slate-800 my-1" />
-                                            {mailboxes.find(m => m.id === selectedMailbox)?.role === 'junk' ? (
+                                            {mailboxes.find(m => m.id === selectedMailbox)?.role !== 'inbox' && (
                                               <button 
-                                                onClick={(e) => { e.stopPropagation(); handleMoveToInbox(email.id); setContextMenuEmail(null); }}
+                                                onClick={(e) => { e.stopPropagation(); handleMoveToInbox(email); setContextMenuEmail(null); }}
                                                 className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2 font-medium"
                                               >
                                                 <Inbox className="w-4 h-4" /> Move to Inbox
                                               </button>
-                                            ) : (
+                                            )}
+                                            {mailboxes.find(m => m.id === selectedMailbox)?.role !== 'junk' && (
                                               <button 
-                                                onClick={(e) => { e.stopPropagation(); handleMoveToJunk(email.id); setContextMenuEmail(null); }}
+                                                onClick={(e) => { e.stopPropagation(); handleMoveToJunk(email); setContextMenuEmail(null); }}
                                                 className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2 font-medium"
                                               >
                                                 <AlertCircle className="w-4 h-4" /> Move to Junk
@@ -3194,59 +3526,62 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <ChevronDown className="w-5 h-5 rotate-90" />
                         </button>
                         <button 
-                          onClick={() => handleArchiveEmail(selectedEmail.id)}
-                          className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" 
-                          title="Archive"
+                          onClick={() => mailboxes.find(m => m.id === selectedMailbox)?.role !== 'inbox' ? handleMoveToInbox(selectedEmail) : handleArchiveEmail(selectedEmail)}
+                          className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" 
+                          title={mailboxes.find(m => m.id === selectedMailbox)?.role !== 'inbox' ? "Move to Inbox" : "Archive"}
                         >
-                          <Archive className="w-4 h-4" />
+                          {mailboxes.find(m => m.id === selectedMailbox)?.role !== 'inbox' ? <Inbox className="w-[18px] h-[18px]" /> : <Archive className="w-[18px] h-[18px]" />}
+                        </button>
+                        <button 
+                          onClick={() => handleCreateRuleAndMove(selectedEmail, 'Spam')}
+                          className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" 
+                          title="Report Spam"
+                        >
+                          <ShieldAlert className="w-[18px] h-[18px]" />
                         </button>
                         <button 
                           onClick={() => handleDeleteEmail(selectedEmail.id)}
-                          className="p-2 text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" 
+                          className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" 
                           title="Delete"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-[18px] h-[18px]" />
                         </button>
-                        <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-2" />
-                        <button 
-                          onClick={() => handleToggleStar(selectedEmail)}
-                          className="p-2 text-slate-500 dark:text-slate-400 hover:text-yellow-500 dark:hover:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 rounded-lg transition-colors" 
-                          title="Star"
-                        >
-                          <Star className={cn("w-4 h-4", selectedEmail.starred && "fill-yellow-400 text-yellow-400")} />
-                        </button>
+
+                        <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1.5" />
+
                         <button 
                           onClick={() => selectedEmail.read ? handleMarkAsUnread(selectedEmail.id) : handleMarkAsRead(selectedEmail.id)}
-                          className="p-2 text-slate-500 dark:text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-colors" 
+                          className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" 
                           title={selectedEmail.read ? "Mark as unread" : "Mark as read"}
                         >
-                          {selectedEmail.read ? <Mail className="w-4 h-4" /> : <Shield className="w-4 h-4" />}
+                          {selectedEmail.read ? <Mail className="w-[18px] h-[18px]" /> : <MailCheck className="w-[18px] h-[18px]" />}
+                        </button>
+                        <button 
+                          onClick={() => handleCreateRuleAndMove(selectedEmail, 'Snoozed')}
+                          className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 rounded-lg transition-colors" 
+                          title="Snooze"
+                        >
+                          <Clock className="w-[18px] h-[18px]" />
+                        </button>
+
+                        <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1.5" />
+
+                        <button 
+                          onClick={() => handleCreateRuleAndMove(selectedEmail, 'Important')}
+                          className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-colors" 
+                          title="Mark as Important"
+                        >
+                          <Star className="w-[18px] h-[18px]" />
+                        </button>
+                        <button 
+                          onClick={() => handleCreateRuleAndMove(selectedEmail, 'Muted')}
+                          className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" 
+                          title="Mute Sender"
+                        >
+                          <BellOff className="w-[18px] h-[18px]" />
                         </button>
                       </div>
                       <div className="flex items-center gap-1">
-                        <button 
-                          onClick={() => {
-                            setToAddresses([selectedEmail.from.email]);
-                            setSubject(`Re: ${selectedEmail.subject}`);
-                            setEmailBody(`\n\n--- On ${format(new Date(selectedEmail.date), "MMM d, yyyy")} ${selectedEmail.from.name} wrote ---\n> ${selectedEmail.preview}`);
-                            setIsComposeOpen(true);
-                          }}
-                          className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" 
-                          title="Reply"
-                        >
-                          <Reply className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => {
-                            setSubject(`Fwd: ${selectedEmail.subject}`);
-                            setEmailBody(`\n\n--- Forwarded message ---\nFrom: ${selectedEmail.from.name} <${selectedEmail.from.email}>\nDate: ${format(new Date(selectedEmail.date), "MMM d, yyyy")}\nSubject: ${selectedEmail.subject}\n\n${selectedEmail.body}`);
-                            setIsComposeOpen(true);
-                          }}
-                          className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" 
-                          title="Forward"
-                        >
-                          <Forward className="w-4 h-4" />
-                        </button>
                         <div className="relative">
                           <button 
                             onClick={() => setIsEmailActionsOpen(!isEmailActionsOpen)}
@@ -3259,23 +3594,24 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             <>
                               <div className="fixed inset-0 z-40" onClick={() => setIsEmailActionsOpen(false)} />
                               <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-[#11131f] border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 py-1 animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
-                                {mailboxes.find(m => m.id === selectedMailbox)?.role === 'junk' ? (
+                                {mailboxes.find(m => m.id === selectedMailbox)?.role !== 'inbox' && (
                                   <button 
-                                    onClick={() => { handleMoveToInbox(selectedEmail.id); setIsEmailActionsOpen(false); }}
+                                    onClick={() => { handleMoveToInbox(selectedEmail); setIsEmailActionsOpen(false); }}
                                     className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2"
                                   >
                                     <Inbox className="w-4 h-4" /> Move to Inbox
                                   </button>
-                                ) : (
+                                )}
+                                {mailboxes.find(m => m.id === selectedMailbox)?.role !== 'junk' && (
                                   <button 
-                                    onClick={() => { handleMoveToJunk(selectedEmail.id); setIsEmailActionsOpen(false); }}
+                                    onClick={() => { handleMoveToJunk(selectedEmail); setIsEmailActionsOpen(false); }}
                                     className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2"
                                   >
                                     <AlertCircle className="w-4 h-4" /> Move to Junk
                                   </button>
                                 )}
                                 <button 
-                                  onClick={() => { handleArchiveEmail(selectedEmail.id); setIsEmailActionsOpen(false); }}
+                                  onClick={() => { handleArchiveEmail(selectedEmail); setIsEmailActionsOpen(false); }}
                                   className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center gap-2"
                                 >
                                   <Archive className="w-4 h-4" /> Archive
@@ -3437,11 +3773,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           </div>
                         </div>
 
-                        <div className="mt-8 text-slate-900 dark:text-slate-100 overflow-x-auto max-w-none">
-                          <div 
-                            className="prose prose-slate max-w-none prose-p:leading-relaxed prose-a:text-indigo-600 prose-img:rounded-lg dark:prose-invert"
-                            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(selectedEmail.body || "<em>No content</em>") }}
-                          />
+                        <div className="mt-8 overflow-x-auto max-w-none">
+                          <HtmlEmailViewer htmlContent={DOMPurify.sanitize(selectedEmail.body || "<em>No content</em>")} />
                         </div>
 
                         {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
@@ -3463,7 +3796,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     </div>
                     
                     {/* Sticky Footer for Reply/Forward */}
-                    <div className="shrink-0 p-4 bg-white/90 dark:bg-[#050505]/90 backdrop-blur-md border-t border-slate-100 dark:border-slate-800 flex gap-3 justify-center sm:justify-start">
+                    <div className="shrink-0 p-3 sm:p-4 bg-white/90 dark:bg-[#050505]/90 backdrop-blur-md border-t border-slate-100 dark:border-slate-800 flex flex-nowrap gap-2 sm:gap-3 justify-center sm:justify-start overflow-visible min-w-0">
                       <button 
                         onClick={() => {
                           const email = emails.find(e => e.id === selectedEmail.id);
@@ -3474,9 +3807,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             setIsComposeOpen(true);
                           }
                         }}
-                        className="flex items-center gap-2 px-8 py-3 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all font-semibold text-sm shadow-sm"
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-8 py-3 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all font-semibold text-[13px] sm:text-sm shadow-sm whitespace-nowrap"
                       >
-                        <Reply className="w-4 h-4" /> Reply
+                        <Reply className="w-4 h-4 shrink-0" /> Reply
                       </button>
                       <button 
                         onClick={() => {
@@ -3488,10 +3821,36 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             setIsComposeOpen(true);
                           }
                         }}
-                        className="flex items-center gap-2 px-8 py-3 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all font-semibold text-sm shadow-sm"
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-8 py-3 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all font-semibold text-[13px] sm:text-sm shadow-sm whitespace-nowrap"
                       >
-                        <Forward className="w-4 h-4" /> Forward
+                        <Forward className="w-4 h-4 shrink-0" /> Forward
                       </button>
+                      
+                      <div className="relative shrink-0">
+                        <button 
+                          onClick={() => setIsEmojiPickerOpen(!isEmojiPickerOpen)}
+                          className="flex items-center justify-center w-[44px] sm:w-[46px] h-[44px] sm:h-[46px] rounded-full bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-all shadow-sm"
+                          title="Quick Emoji Reply"
+                        >
+                          <Smile className="w-5 h-5" />
+                        </button>
+                        {isEmojiPickerOpen && (
+                          <>
+                            <div className="fixed inset-0 z-40" onClick={() => setIsEmojiPickerOpen(false)} />
+                            <div className="absolute bottom-full mb-2 right-0 sm:right-0 bg-white dark:bg-[#11131f] border border-slate-200 dark:border-slate-800 rounded-full shadow-lg p-2 z-[60] flex gap-1 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                              {['👍', '❤️', '😂', '🎉', '😢', '🔥'].map(emoji => (
+                                <button 
+                                  key={emoji}
+                                  onClick={() => handleEmojiReply(selectedEmail, emoji)}
+                                  className="w-10 h-10 flex items-center justify-center text-xl hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors hover:scale-110 active:scale-95"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </>
                 ) : (
@@ -3809,15 +4168,16 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4 px-3 shrink-0">Settings</h2>
                 <nav className="flex-col gap-1 flex flex-1 overflow-y-auto pr-2 custom-scrollbar">
                   {[
-                    { id: 'account', label: 'Account', icon: User },
-                    { id: 'general', label: 'General', icon: Settings },
-                    { id: 'notifications', label: 'Notifications', icon: Bell },
-                    { id: 'vacation', label: 'Vacation', icon: Reply },
-                    { id: 'templates', label: 'Templates', icon: File },
-                    { id: 'contacts', label: 'Contacts', icon: Users },
-                    { id: 'filters', label: 'Filters', icon: Filter },
-                    { id: 'security', label: 'Security', icon: Shield },
-                    { id: 'advanced', label: 'Advanced', icon: Key },
+                    { id: 'account', icon: User },
+                    { id: 'general', icon: Settings },
+                    { id: 'notifications', icon: Bell },
+                    { id: 'vacation', icon: Reply },
+                    { id: 'templates', icon: File },
+                    { id: 'contacts', icon: Users },
+                    { id: 'folders', icon: Folder },
+                    { id: 'filters', icon: Filter },
+                    { id: 'security', icon: Shield },
+                    { id: 'advanced', icon: Key },
                   ].map((item) => (
                     <button 
                       key={item.id}
@@ -3827,7 +4187,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         isSettingsSection === item.id ? "bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900"
                       )}
                     >
-                      <item.icon className="w-4 h-4" /> {item.label}
+                      <item.icon className="w-4 h-4" /> {t(language, item.id)}
                     </button>
                   ))}
                 </nav>
@@ -3837,7 +4197,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     onClick={onLogout}
                     className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
                   >
-                    <LogOut className="w-4 h-4" /> Sign Out
+                    <LogOut className="w-4 h-4" /> {t(language, 'signOut')}
                   </button>
                 </div>
               </div>
@@ -3847,27 +4207,29 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 {/* Mobile Settings Header */}
                 <div className="sticky top-0 z-20 p-4 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-black/80 backdrop-blur-md flex items-center justify-between md:p-6">
                   <h1 className="text-xl font-bold text-slate-900 dark:text-white md:text-2xl">
-                    {isSettingsSection === 'account' ? 'Account Settings' : 
-                     isSettingsSection === 'general' ? 'General Settings' : 
-                     isSettingsSection === 'security' ? 'Security & Privacy' : 
-                     isSettingsSection === 'vacation' ? 'Vacation Responder' : 
-                     isSettingsSection === 'notifications' ? 'Notification Settings' : 
-                     isSettingsSection === 'templates' ? 'Template Management' : 
-                     isSettingsSection === 'contacts' ? 'Contact Management' : 
-                     isSettingsSection === 'filters' ? 'Filters & Rules' : 'Advanced Settings'}
+                    {isSettingsSection === 'account' ? t(language, 'accountInformation') : 
+                     isSettingsSection === 'general' ? t(language, 'generalSettings') : 
+                     isSettingsSection === 'security' ? t(language, 'security') : 
+                     isSettingsSection === 'vacation' ? t(language, 'vacation') : 
+                     isSettingsSection === 'notifications' ? t(language, 'notifications') : 
+                     isSettingsSection === 'templates' ? t(language, 'templates') : 
+                     isSettingsSection === 'contacts' ? t(language, 'contacts') : 
+                     isSettingsSection === 'folders' ? t(language, 'folders') : 
+                     isSettingsSection === 'filters' ? t(language, 'filters') : t(language, 'advanced')}
                   </h1>
                   <button 
                     onClick={() => setIsSettingsMenuOpen(true)}
                     className="md:hidden flex items-center gap-2 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-4 py-2 rounded-full text-sm font-bold shadow-sm border border-indigo-100 dark:border-indigo-500/20"
                   >
-                    {isSettingsSection === 'account' ? 'Account' : 
-                     isSettingsSection === 'general' ? 'General' : 
-                     isSettingsSection === 'security' ? 'Security' : 
-                     isSettingsSection === 'vacation' ? 'Vacation' : 
-                     isSettingsSection === 'notifications' ? 'Notifications' : 
-                     isSettingsSection === 'templates' ? 'Templates' : 
-                     isSettingsSection === 'contacts' ? 'Contacts' : 
-                     isSettingsSection === 'filters' ? 'Filters & Rules' : 'Advanced'}
+                    {isSettingsSection === 'account' ? t(language, 'account') : 
+                     isSettingsSection === 'general' ? t(language, 'general') : 
+                     isSettingsSection === 'security' ? t(language, 'security') : 
+                     isSettingsSection === 'vacation' ? t(language, 'vacation') : 
+                     isSettingsSection === 'notifications' ? t(language, 'notifications') : 
+                     isSettingsSection === 'templates' ? t(language, 'templates') : 
+                     isSettingsSection === 'contacts' ? t(language, 'contacts') : 
+                     isSettingsSection === 'folders' ? t(language, 'folders') : 
+                     isSettingsSection === 'filters' ? t(language, 'filters') : t(language, 'advanced')}
                     <ChevronDown className="w-4 h-4" />
                   </button>
                 </div>
@@ -3885,15 +4247,16 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       </div>
                       <div className="p-2 overflow-y-auto flex-1 custom-scrollbar">
                         {[
-                          { id: 'account', label: 'Account', icon: User },
-                          { id: 'general', label: 'General', icon: Settings },
-                          { id: 'notifications', label: 'Notifications', icon: Bell },
-                          { id: 'vacation', label: 'Vacation', icon: Reply },
-                          { id: 'templates', label: 'Templates', icon: File },
-                          { id: 'contacts', label: 'Contacts', icon: Users },
-                          { id: 'filters', label: 'Filters & Rules', icon: Filter },
-                          { id: 'security', label: 'Security', icon: Shield },
-                          { id: 'advanced', label: 'Advanced', icon: Key },
+                          { id: 'account', icon: User },
+                          { id: 'general', icon: Settings },
+                          { id: 'notifications', icon: Bell },
+                          { id: 'vacation', icon: Reply },
+                          { id: 'templates', icon: File },
+                          { id: 'contacts', icon: Users },
+                          { id: 'folders', icon: Folder },
+                          { id: 'filters', icon: Filter },
+                          { id: 'security', icon: Shield },
+                          { id: 'advanced', icon: Key },
                         ].map((item) => (
                           <button 
                             key={item.id}
@@ -3906,7 +4269,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             <div className="flex items-center gap-4">
                               <item.icon className={cn("w-5 h-5", isSettingsSection === item.id ? "text-indigo-600 dark:text-indigo-400" : "text-slate-500")} />
                               <span className={cn("text-lg", isSettingsSection === item.id ? "font-bold text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400")}>
-                                {item.label}
+                                {t(language, item.id)}
                               </span>
                             </div>
                             {isSettingsSection === item.id && (
@@ -3929,16 +4292,16 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
                             <User className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                           </div>
-                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Account Information</h2>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">{t(language, 'accountInformation')}</h2>
                         </div>
                         
                         <div className="divide-y divide-slate-200 dark:divide-slate-800">
                           <div className="py-4">
-                            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Username</div>
+                            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">{t(language, 'username')}</div>
                             <div className="text-slate-900 dark:text-white font-bold text-lg">{credentials.username}</div>
                           </div>
                           <div className="py-4">
-                            <div className="text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mb-1.5 opacity-60">Server URL</div>
+                            <div className="text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mb-1.5 opacity-60">{t(language, 'serverUrl')}</div>
                             <div className="text-slate-900 dark:text-white font-bold truncate leading-relaxed text-sm sm:text-base pr-4" title={credentials.serverUrl}>{credentials.serverUrl}</div>
                           </div>
                           <div className="py-4">
@@ -3953,7 +4316,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <div className="p-2 bg-purple-100 dark:bg-purple-500/10 rounded-xl">
                             <Mail className="w-5 h-5 text-purple-600 dark:text-purple-400" />
                           </div>
-                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Email Identities</h2>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">{t(language, 'emailIdentities')}</h2>
                         </div>
 
                         <div className="space-y-4">
@@ -3976,7 +4339,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 <div className="flex flex-col items-end gap-2">
                                   {selectedIdentityId === identity.id && (
                                     <span className="bg-indigo-600 text-white text-[10px] font-black px-3 py-1 rounded-full tracking-wider shadow-lg shadow-indigo-600/20">
-                                      DEFAULT
+                                      {t(language, 'default')}
                                     </span>
                                   )}
                                   <button
@@ -4021,13 +4384,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <div className="p-2 bg-blue-100 dark:bg-blue-500/10 rounded-xl">
                             <Settings className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                           </div>
-                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Appearance</h2>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">{t(language, 'appearance')}</h2>
                         </div>
 
                         <div className="flex flex-row items-center justify-between gap-4">
                           <div className="flex-1 min-w-0 pr-4">
-                            <div className="font-bold text-slate-900 dark:text-white text-lg">Dark Mode</div>
-                            <div className="text-sm text-slate-500 dark:text-slate-400">Toggle dark theme across the app</div>
+                            <div className="font-bold text-slate-900 dark:text-white text-lg">{t(language, 'darkMode')}</div>
+                            <div className="text-sm text-slate-500 dark:text-slate-400">{t(language, 'darkModeDesc')}</div>
                           </div>
                           <button 
                             onClick={() => setIsDarkMode(!isDarkMode)}
@@ -4046,31 +4409,46 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <div className="p-2 bg-amber-100 dark:bg-amber-500/10 rounded-xl">
                             <Clock className="w-5 h-5 text-amber-600 dark:text-amber-400" />
                           </div>
-                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Regional</h2>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">{t(language, 'regional')}</h2>
                         </div>
 
                         <div className="space-y-6">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                            <span className="text-slate-600 dark:text-slate-400 font-medium">Language</span>
+                            <span className="text-slate-600 dark:text-slate-400 font-medium tracking-wide">{t(language, 'language')}</span>
                             <div className="relative">
-                              <select className="appearance-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 pr-10 text-sm font-bold dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20">
-                                <option>English (US)</option>
-                                <option>English (UK)</option>
-                                <option>Spanish</option>
-                                <option>French</option>
+                              <select
+                                value={language}
+                                onChange={(e) => setLanguage(e.target.value)}
+                                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm font-bold dark:text-white outline-none hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors focus:ring-2 focus:ring-indigo-500/20 appearance-none pr-10 w-full max-w-[200px]"
+                              >
+                                <option value="English (US)">English (US)</option>
+                                <option value="English (UK)">English (UK)</option>
+                                <option value="Spanish">Spanish</option>
+                                <option value="French">French</option>
+                                <option value="German">German</option>
+                                <option value="Italian">Italian</option>
+                                <option value="Chinese">Chinese</option>
+                                <option value="Japanese">Japanese</option>
                               </select>
                               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                             </div>
                           </div>
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                            <span className="text-slate-600 dark:text-slate-400 font-medium">Timezone</span>
+                            <span className="text-slate-600 dark:text-slate-400 font-medium tracking-wide">{t(language, 'timezone')}</span>
                             <div className="relative">
-                              <select 
-                                defaultValue={currentTimeZone}
-                                className="appearance-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 pr-10 text-sm font-bold dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/20 max-w-[200px] truncate"
+                              <select
+                                value={timezone}
+                                onChange={(e) => setTimezone(e.target.value)}
+                                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm font-bold dark:text-white outline-none hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors focus:ring-2 focus:ring-indigo-500/20 appearance-none pr-10 w-full max-w-[200px]"
                               >
-                                <option value={currentTimeZone}>{currentTimeZone}</option>
-                                <option value="UTC">UTC (Coordinated Universal Time)</option>
+                                {(['America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'America/Sao_Paulo', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Moscow', 'Africa/Cairo', 'Africa/Johannesburg', 'Asia/Dubai', 'Asia/Karachi', 'Asia/Kolkata', 'Asia/Bangkok', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney', 'Pacific/Auckland', 'UTC'].includes(Intl.DateTimeFormat().resolvedOptions().timeZone) ? 
+                                  ['America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'America/Sao_Paulo', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Moscow', 'Africa/Cairo', 'Africa/Johannesburg', 'Asia/Dubai', 'Asia/Karachi', 'Asia/Kolkata', 'Asia/Bangkok', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney', 'Pacific/Auckland', 'UTC'] :
+                                  Array.from(new Set([Intl.DateTimeFormat().resolvedOptions().timeZone, 'America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'America/Sao_Paulo', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Moscow', 'Africa/Cairo', 'Africa/Johannesburg', 'Asia/Dubai', 'Asia/Karachi', 'Asia/Kolkata', 'Asia/Bangkok', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney', 'Pacific/Auckland', 'UTC']))
+                                ).map(tz => (
+                                  <option key={tz} value={tz}>
+                                    {tz === 'UTC' ? 'UTC (Coordinated Universal Time)' : tz.replace(/_/g, ' ')}
+                                  </option>
+                                ))}
                               </select>
                               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                             </div>
@@ -4182,13 +4560,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
                           <Reply className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                         </div>
-                        <h2 className="text-xl font-bold text-slate-900 dark:text-white">Auto-Responder</h2>
+                        <h2 className="text-xl font-bold text-slate-900 dark:text-white">{t(language, 'autoResponder')}</h2>
                       </div>
                       
                       <div className="flex flex-row items-center justify-between mb-8 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl gap-4">
                         <div className="flex-1 min-w-0 pr-4">
-                          <div className="font-bold text-slate-900 dark:text-white text-lg">Enable Auto-Reply</div>
-                          <div className="text-sm text-slate-500 dark:text-slate-400">Automatically reply to incoming emails</div>
+                          <div className="font-bold text-slate-900 dark:text-white text-lg">{t(language, 'enableAutoReply')}</div>
+                          <div className="text-sm text-slate-500 dark:text-slate-400">{t(language, 'automaticallyReply')}</div>
                         </div>
                         <button 
                           onClick={() => setVacationEnabled(!vacationEnabled)}
@@ -4203,22 +4581,42 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
                       <div className={cn("space-y-6 transition-all duration-300", vacationEnabled ? "opacity-100" : "opacity-40 pointer-events-none")}>
                         <div className="space-y-2">
-                          <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">Subject (Header)</label>
+                          <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">{t(language, 'subject')}</label>
                           <input 
                             type="text"
                             value={vacationSubject}
                             onChange={(e) => setVacationSubject(e.target.value)}
-                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:text-white transition-all"
-                            placeholder="Out of Office"
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:text-white transition-all min-h-[50px] appearance-none"
+                            placeholder={t(language, 'outOfOffice')}
                           />
                         </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">{t(language, 'startDateOptional')}</label>
+                            <input 
+                              type="datetime-local"
+                              value={vacationFromDate}
+                              onChange={(e) => setVacationFromDate(e.target.value)}
+                              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:text-white transition-all min-h-[50px] appearance-none"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">{t(language, 'endDateOptional')}</label>
+                            <input 
+                              type="datetime-local"
+                              value={vacationToDate}
+                              onChange={(e) => setVacationToDate(e.target.value)}
+                              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:text-white transition-all min-h-[50px] appearance-none"
+                            />
+                          </div>
+                        </div>
                         <div className="space-y-2">
-                          <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">Message (Body)</label>
+                          <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">{t(language, 'body')}</label>
                           <textarea 
                             value={vacationText}
                             onChange={(e) => setVacationText(e.target.value)}
                             className="w-full h-48 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:text-white transition-all resize-none"
-                            placeholder="I am currently away..."
+                            placeholder={t(language, 'iAmCurrentlyAway')}
                           />
                         </div>
                       </div>
@@ -4232,7 +4630,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 await client.setVacationResponse({
                                   isEnabled: vacationEnabled,
                                   subject: vacationSubject,
-                                  textBody: vacationText
+                                  ...(/<[a-z][\s\S]*>/i.test(vacationText) ? { htmlBody: vacationText } : { textBody: vacationText }),
+                                  fromDate: vacationFromDate || null,
+                                  toDate: vacationToDate || null
                                 });
                                 toast.success("Vacation responder updated!");
                               } catch (e) {
@@ -4245,7 +4645,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             className="w-full sm:w-auto px-8 py-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-2xl shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
                           >
                             {isSavingVacation ? <Loader2 className="w-5 h-5 animate-spin" /> : <MailCheck className="w-5 h-5" />}
-                            Update Responder
+                            {t(language, 'updateResponder')}
                           </button>
                         </div>
                     </div>
@@ -4393,10 +4793,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               <button 
                                 onClick={() => {
                                   const newState = !cat.active;
-                                  if (cat.id === 'promotions') { setFilterPromotions(newState); localStorage.setItem('webmail_filter_promo', newState.toString()); compileAndPushSieve(newState, filterSocial, filterUpdates, filterReports); }
-                                  if (cat.id === 'social') { setFilterSocial(newState); localStorage.setItem('webmail_filter_social', newState.toString()); compileAndPushSieve(filterPromotions, newState, filterUpdates, filterReports); }
-                                  if (cat.id === 'updates') { setFilterUpdates(newState); localStorage.setItem('webmail_filter_updates', newState.toString()); compileAndPushSieve(filterPromotions, filterSocial, newState, filterReports); }
-                                  if (cat.id === 'reports') { setFilterReports(newState); localStorage.setItem('webmail_filter_reports', newState.toString()); compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, newState); }
+                                  if (cat.id === 'promotions') { setFilterPromotions(newState); localStorage.setItem('webmail_filter_promo', newState.toString()); compileAndPushSieve(newState, filterSocial, filterUpdates, filterReports, filterOnlyContacts); }
+                                  if (cat.id === 'social') { setFilterSocial(newState); localStorage.setItem('webmail_filter_social', newState.toString()); compileAndPushSieve(filterPromotions, newState, filterUpdates, filterReports, filterOnlyContacts); }
+                                  if (cat.id === 'updates') { setFilterUpdates(newState); localStorage.setItem('webmail_filter_updates', newState.toString()); compileAndPushSieve(filterPromotions, filterSocial, newState, filterReports, filterOnlyContacts); }
+                                  if (cat.id === 'reports') { setFilterReports(newState); localStorage.setItem('webmail_filter_reports', newState.toString()); compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, newState, filterOnlyContacts); }
                                 }}
                                 className={cn(
                                   "relative inline-flex h-8 w-14 items-center rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 shrink-0",
@@ -4407,6 +4807,26 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               </button>
                             </div>
                           ))}
+                          
+                          <div className="flex flex-row items-center justify-between p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 transition-colors gap-4">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Strict Contacts Mode</h3>
+                              <p className="text-sm text-slate-500 dark:text-slate-400">Move emails from unknown senders (not in your Contacts) directly to Junk.</p>
+                            </div>
+                            <button 
+                              onClick={async () => {
+                                const newState = !filterOnlyContacts;
+                                setFilterOnlyContacts(newState);
+                                localStorage.setItem('webmail_filter_only_contacts', newState.toString());
+                                compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, newState);
+                              }}
+                              className={cn(
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 shrink-0",
+                                filterOnlyContacts ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-800"
+                              )}>
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", filterOnlyContacts ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
                         </div>
                       </div>
 
@@ -4451,56 +4871,119 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         ) : (
                           <div className="space-y-4">
                             {customRules.map(rule => (
-                              <div key={rule.id} className="flex flex-row items-center justify-between p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 gap-4 shadow-sm">
+                              <div key={rule.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 gap-4 shadow-sm">
                                 <div className="flex-1 min-w-0 pr-4">
                                   <div className="flex items-center gap-2">
-                                    <div className="font-bold text-slate-900 dark:text-white text-lg">{rule.name}</div>
-                                    <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full">
-                                      {rule.action?.type?.replace('_', ' ')} {rule.action?.value}
+                                    <div className="font-bold text-slate-900 dark:text-white text-lg truncate">{rule.name}</div>
+                                    <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 overflow-hidden text-ellipsis max-w-[150px]">
+                                      {rule.action?.type?.replace('_', ' ')} {rule.action?.value && <span className="opacity-70">{rule.action.value}</span>}
                                     </span>
                                   </div>
-                                  <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                                  <div className="text-sm text-slate-500 dark:text-slate-400 mt-1 truncate">
                                     If <span className="font-semibold text-slate-700 dark:text-slate-300">{rule.condition?.type}</span> {rule.condition?.matcher?.replace('_', ' ')} "{rule.condition?.value}"
                                   </div>
                                 </div>
-                                <button 
-                                  onClick={() => {
-                                    setEditingRule(rule);
-                                    setIsRuleModalOpen(true);
-                                  }}
-                                  className="p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                                >
-                                  <Edit2 className="w-4 h-4" />
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    const updated = customRules.map(r => r.id === rule.id ? { ...r, active: !r.active } : r);
-                                    setCustomRules(updated);
-                                    localStorage.setItem('webmail_custom_rules', JSON.stringify(updated));
-                                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, updated);
-                                  }}
-                                  className={cn(
-                                    "relative inline-flex h-8 w-14 items-center rounded-full transition-all focus:outline-none shrink-0",
-                                    rule.active ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
-                                  )}
-                                >
-                                  <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", rule.active ? "translate-x-7" : "translate-x-1")} />
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    const updated = customRules.filter(r => r.id !== rule.id);
-                                    setCustomRules(updated);
-                                    localStorage.setItem('webmail_custom_rules', JSON.stringify(updated));
-                                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, updated);
-                                  }}
-                                  className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
+                                <div className="flex items-center gap-2 self-end sm:self-auto shrink-0 mt-2 sm:mt-0">
+                                  <button 
+                                    onClick={() => {
+                                      setEditingRule(rule);
+                                      setIsRuleModalOpen(true);
+                                    }}
+                                    className="p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                                  >
+                                    <Edit2 className="w-4 h-4" />
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      const updated = customRules.map(r => r.id === rule.id ? { ...r, active: !r.active } : r);
+                                      setCustomRules(updated);
+                                      localStorage.setItem('webmail_custom_rules', JSON.stringify(updated));
+                                      compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, filterOnlyContacts, updated);
+                                    }}
+                                    className={cn(
+                                      "relative inline-flex h-8 w-14 items-center rounded-full transition-all focus:outline-none shrink-0",
+                                      rule.active ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                                    )}
+                                  >
+                                    <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", rule.active ? "translate-x-7" : "translate-x-1")} />
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      const updated = customRules.filter(r => r.id !== rule.id);
+                                      setCustomRules(updated);
+                                      localStorage.setItem('webmail_custom_rules', JSON.stringify(updated));
+                                      compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, filterOnlyContacts, updated);
+                                    }}
+                                    className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
                               </div>
                             ))}
                           </div>
                         )}
+                      </div>
+                    </div>
+                  )}
+
+                  {isSettingsSection === 'folders' && (
+                    <div className="grid gap-6">
+                      <div className="bg-white dark:bg-[#050505] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
+                            <Folder className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                          </div>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">{getTranslation(language, "folders")}</h2>
+                        </div>
+                        
+                        <div className="space-y-3">
+                          {mailboxes.map((mb) => {
+                            const isNative = mb.role || ['inbox', 'drafts', 'sent', 'trash', 'junk', 'archive', 'outbox'].includes(mb.name.toLowerCase());
+                            let Icon = iconMap[mb.icon] || Folder;
+                            
+                            // Re-apply same sidebar display overrides if needed (e.g. for muted, important, snoozed custom folders that might not be in iconMap logic in getMailboxes)
+                            if (mb.role === 'junk') Icon = ShieldAlert;
+                            else if (mb.role === 'trash') Icon = Trash2;
+                            else if (mb.role === 'drafts') Icon = FileEdit;
+                            else if (mb.role === 'inbox') Icon = Inbox;
+                            else if (mb.role === 'archive' || mb.name.toLowerCase() === 'archive') Icon = Archive;
+                            else if (mb.role === 'sent' || mb.role === 'outbox' || mb.name.toLowerCase() === 'outbox') Icon = Send;
+                            else if (mb.name.toLowerCase().includes('report')) Icon = BarChart3;
+                            else if (mb.name.toLowerCase() === 'muted') Icon = BellOff;
+                            else if (mb.name.toLowerCase() === 'important') Icon = Star;
+                            else if (mb.name.toLowerCase() === 'snoozed') Icon = Clock;
+                            
+                            return (
+                              <div key={mb.id} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl">
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                                    <Icon className={cn("w-4 h-4", isNative ? "text-slate-400" : "text-indigo-500")} />
+                                  </div>
+                                  <div>
+                                    <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{getMailboxDisplayName(mb, language)}</h3>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                                      {isNative ? 'System folder' : 'Custom folder'} • {mb.totalEmails || 0} messages
+                                    </p>
+                                  </div>
+                                </div>
+                                {!isNative && (
+                                  <button
+                                    onClick={() => handleDeleteMailbox(mb.id, mb.name)}
+                                    className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
+                                    title="Delete custom folder"
+                                  >
+                                    <Trash2 className="w-5 h-5" />
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                          
+                          {mailboxes.length === 0 && (
+                            <p className="text-sm text-slate-500 dark:text-slate-400 p-4 text-center">No folders found.</p>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -4521,8 +5004,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               <div className="font-bold text-slate-900 dark:text-white">Developer Mode</div>
                               <div className="text-xs text-slate-500 dark:text-slate-400">Enable advanced API debugging logs</div>
                             </div>
-                            <button disabled className="relative inline-flex h-8 w-14 items-center rounded-full bg-slate-100 dark:bg-slate-800 opacity-50 cursor-not-allowed shrink-0">
-                              <span className="inline-block h-6 w-6 transform rounded-full bg-white transition-transform translate-x-1 shadow-md" />
+                            <button 
+                              onClick={() => {
+                                const newMode = !isDeveloperMode;
+                                setIsDeveloperMode(newMode);
+                                localStorage.setItem("webmail_developer_mode", String(newMode));
+                              }}
+                              className={cn("relative inline-flex h-8 w-14 items-center rounded-full transition-colors shrink-0 outline-none", isDeveloperMode ? 'bg-indigo-600' : 'bg-slate-200 dark:bg-slate-700')}
+                            >
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white transition-transform shadow-md", isDeveloperMode ? 'translate-x-7' : 'translate-x-1')} />
                             </button>
                           </div>
                           <div className="flex items-center justify-between gap-4">
@@ -4530,8 +5020,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               <div className="font-bold text-slate-900 dark:text-white">Beta Features</div>
                               <div className="text-xs text-slate-500 dark:text-slate-400">Try out experimental UI improvements</div>
                             </div>
-                            <button className="relative inline-flex h-8 w-14 items-center rounded-full bg-indigo-600 ring-offset-2 focus:ring-2 focus:ring-indigo-500 shrink-0">
-                              <span className="inline-block h-6 w-6 transform rounded-full bg-white transition-transform translate-x-7 shadow-md" />
+                            <button 
+                              onClick={() => {
+                                const newMode = !isBetaFeaturesEnabled;
+                                setIsBetaFeaturesEnabled(newMode);
+                                localStorage.setItem("webmail_beta_features", String(newMode));
+                              }}
+                              className={cn("relative inline-flex h-8 w-14 items-center rounded-full transition-colors shrink-0 outline-none", isBetaFeaturesEnabled ? 'bg-indigo-600' : 'bg-slate-200 dark:bg-slate-700')}
+                            >
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white transition-transform shadow-md", isBetaFeaturesEnabled ? 'translate-x-7' : 'translate-x-1')} />
                             </button>
                           </div>
                         </div>
@@ -4551,7 +5048,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           )}
           
           {/* Floating Action Button (Compose / Create Template) */}
-          {((activeApp === 'mail' && !isSidebarOpen)) && (
+          {((activeApp === 'mail' && !isSidebarOpen && !selectedEmail)) && (
             <button 
               onClick={() => {
                 setEditingTemplateId(null);
@@ -4651,9 +5148,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   const m = mailboxes.find(mb => mb.id === selectedMailbox);
                   const isTemplateFolder = m?.role === 'templates' || m?.name.toLowerCase() === 'templates';
                   if (isTemplateFolder) {
-                    return editingTemplateId ? "Edit Template" : "New Template";
+                    return editingTemplateId ? t(language, 'editTemplate') : t(language, 'newTemplate');
                   }
-                  return "Compose";
+                  return t(language, 'compose');
                 })()}
               </span>
             </div>
@@ -4672,7 +5169,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     {!isTemplateFolder && (
                       <div className="flex flex-col gap-0 w-full shrink-0 mt-4">
                         <div className="flex items-center gap-4 border-b border-black/5 dark:border-white/10 pb-4">
-                          <span className="text-[11px] font-semibold tracking-widest text-slate-500 uppercase w-12">From</span>
+                          <span className="text-[11px] font-semibold tracking-widest text-slate-500 uppercase w-12">{getTranslation(language, "from")}</span>
                           <div className="flex-1 relative">
                             <div 
                               onClick={() => setIsIdentityDropdownOpen(!isIdentityDropdownOpen)}
@@ -4730,7 +5227,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         </div>
 
                         <div className="flex items-center gap-4 border-b border-black/5 dark:border-white/10 py-4 relative">
-                          <span className="text-[11px] font-semibold tracking-widest text-slate-500 uppercase w-12">To</span>
+                          <span className="text-[11px] font-semibold tracking-widest text-slate-500 uppercase w-12">{getTranslation(language, "to")}</span>
                           <div className="flex-1 flex flex-wrap items-center gap-2">
                             <button 
                               onClick={() => setIsContactPickerOpen(true)}
@@ -4753,7 +5250,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             <input 
                               type="text" 
                               value={toInput}
-                              placeholder={toAddresses.length === 0 ? "Add recipients" : ""}
+                              placeholder={toAddresses.length === 0 ? getTranslation(language, "addRecipients") : ""}
                               onChange={(e) => {
                                 const val = e.target.value;
                                 setToInput(val);
@@ -4842,7 +5339,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
                     <input 
                       type="text" 
-                      placeholder={isTemplateFolder ? "Template Subject" : "Subject"} 
+                      placeholder={isTemplateFolder ? getTranslation(language, "templateSubject") : getTranslation(language, "subject")} 
                       value={subject}
                       onChange={(e) => setSubject(e.target.value)}
                       className="w-full border-b border-black/5 dark:border-white/10 pb-6 pt-4 bg-transparent outline-none transition-colors font-extrabold text-4xl text-slate-900 dark:text-white shrink-0 placeholder:text-slate-400 dark:placeholder:text-slate-500 placeholder:font-extrabold"
@@ -4969,12 +5466,12 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           </div>
                         )}
                         <textarea 
-                          placeholder={isTemplateFolder ? "Type your template body here..." : "Start writing your masterpiece..."} 
+                          placeholder={isTemplateFolder ? getTranslation(language, "typeTemplateBody") : getTranslation(language, "startWriting")} 
                           value={emailBody}
-                        onChange={(e) => setEmailBody(e.target.value)}
-                        className="w-full flex-1 resize-none outline-none pt-4 bg-transparent text-[15px] leading-relaxed text-slate-900 dark:text-white placeholder:text-slate-300"
-                      />
-                    </>
+                          onChange={(e) => setEmailBody(e.target.value)}
+                          className="w-full flex-1 resize-none outline-none pt-4 bg-transparent text-[15px] leading-relaxed text-slate-900 dark:text-white placeholder:text-slate-300"
+                        />
+                      </>
                   )}
                 </>
               );
@@ -5081,7 +5578,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                            disabled={isSending || toAddresses.length === 0}
                            className="bg-[#ad57ff] hover:bg-[#9745e6] disabled:opacity-50 text-white px-5 py-2.5 rounded-[1.25rem] font-bold flex items-center gap-2 transition-all active:scale-95 text-[13px] tracking-wide"
                          >
-                           {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <>SEND <Send className="w-3.5 h-3.5 ml-1" /></>}
+                           {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <>{getTranslation(language, "send").toUpperCase()} <Send className="w-3.5 h-3.5 ml-1" /></>}
                          </button>
                        );
                      })()}
@@ -5189,7 +5686,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               {isLoadingTemplates ? (
                 <div className="py-12 flex flex-col items-center justify-center gap-3">
                   <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
-                  <p className="text-sm font-medium text-slate-500">Fetching templates...</p>
+                   <p className="text-sm font-medium text-slate-500">{t(language, 'loading')}</p>
                 </div>
               ) : serverTemplates.length === 0 ? (
                 <div className="py-12 text-center">
@@ -5241,7 +5738,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           <div className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 border border-white/10 dark:border-slate-200">
             <div className="flex items-center gap-2">
               <div className="w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
-              <span className="text-sm font-medium">Sending in {countdown}s...</span>
+                   <span className="text-sm font-medium">{t(language, 'loading')}</span>
             </div>
             <div className="w-px h-4 bg-white/20 dark:bg-slate-200" />
             <button 
@@ -5278,79 +5775,85 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 <input
                   autoFocus
                   type="text"
-                  placeholder="e.g. Delete Mark's spam"
-                  className="w-full px-4 py-3 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all shadow-sm"
+                  placeholder="e.g. Move receipts to tax folder"
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all shadow-sm"
                   value={editingRule.name || ''}
                   onChange={e => setEditingRule({...editingRule, name: e.target.value})}
                 />
               </div>
 
-              <div className="p-4 bg-indigo-50 dark:bg-indigo-500/10 rounded-2xl border border-indigo-100 dark:border-indigo-500/20 space-y-4 shadow-sm">
-                <h4 className="font-bold text-indigo-900 dark:text-indigo-300 tracking-tight flex items-center gap-2"><span className="bg-indigo-200 dark:bg-indigo-600/50 text-indigo-700 dark:text-indigo-200 w-6 h-6 rounded-full flex items-center justify-center text-xs">1</span> Condition (IF)</h4>
-                <div className="flex gap-4 flex-col sm:flex-row">
-                  <div className="flex-[1]">
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Trigger</label>
-                    <select 
-                      className="w-full px-3 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm"
-                      value={editingRule.condition?.type}
-                      onChange={e => {
-                        const newType = e.target.value as RuleConditionType;
-                        setEditingRule({
-                          ...editingRule, 
-                          condition: { 
-                            ...editingRule.condition!, 
-                            type: newType, 
-                            matcher: newType === 'size' ? 'gt' : 'contains' 
-                          }
-                        });
-                      }}
-                    >
-                      <option value="subject">Subject</option>
-                      <option value="from">Sender</option>
-                      <option value="to">Recipient</option>
-                      <option value="body">Body (Text)</option>
-                      <option value="header">Custom Header</option>
-                      <option value="spam_score">Spam Score</option>
-                      <option value="size">Message Size</option>
-                    </select>
+              <div className="p-5 bg-slate-50 dark:bg-slate-800/30 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-4">
+                <h4 className="font-bold text-slate-800 dark:text-slate-200 uppercase tracking-widest text-[11px] mb-2 text-indigo-600 dark:text-indigo-400">If</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400">Condition</label>
+                    <div className="relative">
+                      <select 
+                        className="w-full pl-3 pr-8 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm appearance-none"
+                        value={editingRule.condition?.type}
+                        onChange={e => {
+                          const newType = e.target.value as RuleConditionType;
+                          setEditingRule({
+                            ...editingRule, 
+                            condition: { 
+                              ...editingRule.condition!, 
+                              type: newType, 
+                              matcher: newType === 'size' ? 'gt' : 'contains' 
+                            }
+                          });
+                        }}
+                      >
+                        <option value="subject">Subject</option>
+                        <option value="from">Sender</option>
+                        <option value="to">Recipient</option>
+                        <option value="body">Body (Text)</option>
+                        <option value="header">Custom Header</option>
+                        <option value="spam_score">Spam Score</option>
+                        <option value="size">Message Size</option>
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
                   </div>
-                  <div className="flex-[1]">
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Matcher</label>
-                    <select 
-                      className="w-full px-3 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm"
-                      value={editingRule.condition?.matcher}
-                      onChange={e => setEditingRule({
-                        ...editingRule, 
-                        condition: { ...editingRule.condition!, matcher: e.target.value as RuleMatcher }
-                      })}
-                    >
-                      {editingRule.condition?.type === 'size' ? (
-                        <>
-                          <option value="gt">Is greater than</option>
-                          <option value="lt">Is less than</option>
-                        </>
-                      ) : editingRule.condition?.type === 'spam_score' ? (
-                        <option value="gt">Is greater than or eq</option>
-                      ) : (
-                        <>
-                          <option value="contains">Contains</option>
-                          <option value="is">Is exactly</option>
-                          <option value="starts_with">Starts with</option>
-                          <option value="ends_with">Ends with</option>
-                          <option value="regex">Matches Regex</option>
-                        </>
-                      )}
-                    </select>
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400">Matches</label>
+                    <div className="relative">
+                      <select 
+                        className="w-full pl-3 pr-8 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm appearance-none"
+                        value={editingRule.condition?.matcher}
+                        onChange={e => setEditingRule({
+                          ...editingRule, 
+                          condition: { ...editingRule.condition!, matcher: e.target.value as RuleMatcher }
+                        })}
+                      >
+                        {editingRule.condition?.type === 'size' ? (
+                          <>
+                            <option value="gt">Is greater than</option>
+                            <option value="lt">Is less than</option>
+                          </>
+                        ) : editingRule.condition?.type === 'spam_score' ? (
+                          <option value="gt">Is greater than or eq</option>
+                        ) : (
+                          <>
+                            <option value="contains">Contains</option>
+                            <option value="is">Is exactly</option>
+                            <option value="starts_with">Starts with</option>
+                            <option value="ends_with">Ends with</option>
+                            <option value="regex">Matches Regex</option>
+                          </>
+                        )}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
                   </div>
                 </div>
 
                 {editingRule.condition?.type === 'header' && (
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Header Name</label>
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400">Header Name</label>
                     <input
                       type="text"
                       placeholder="e.g. List-Id"
-                      className="w-full px-4 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                      className="w-full px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm"
                       value={editingRule.condition.headerName || ''}
                       onChange={e => setEditingRule({
                         ...editingRule, 
@@ -5360,8 +5863,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   </div>
                 )}
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400">
                     {editingRule.condition?.type === 'size' ? 'Size (Bytes)' : 'Value'}
                   </label>
                   <input
@@ -5371,7 +5874,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       editingRule.condition?.type === 'spam_score' ? "5.0" :
                       editingRule.condition?.type === 'from' ? "mark@example.com" : "invoice"
                     }
-                    className="w-full px-4 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                    className="w-full px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white shadow-sm"
                     value={editingRule.condition?.value || ''}
                     onChange={e => setEditingRule({
                       ...editingRule, 
@@ -5379,21 +5882,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     })}
                   />
                   {editingRule.condition?.type === 'regex' && (
-                    <p className="text-xs text-slate-500 mt-2 font-mono bg-white dark:bg-black p-2 rounded-lg border border-slate-100 dark:border-slate-800">
+                    <p className="text-xs text-slate-500 mt-2 font-mono bg-white dark:bg-slate-900 p-2 rounded-lg border border-slate-100 dark:border-slate-800">
                       Sieve Regex: use regular expressions like <span className="text-indigo-500">.*@spam\.com</span>
                     </p>
                   )}
                 </div>
               </div>
 
-              <div className="p-4 bg-emerald-50 dark:bg-emerald-500/10 rounded-2xl border border-emerald-100 dark:border-emerald-500/20 space-y-4 shadow-sm">
-                <h4 className="font-bold text-emerald-900 dark:text-emerald-300 tracking-tight flex items-center gap-2"><span className="bg-emerald-200 dark:bg-emerald-600/50 text-emerald-700 dark:text-emerald-200 w-6 h-6 rounded-full flex items-center justify-center text-xs">2</span> Action (THEN)</h4>
+              <div className="p-5 bg-slate-50 dark:bg-slate-800/30 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-4">
+                <h4 className="font-bold text-slate-800 dark:text-slate-200 uppercase tracking-widest text-[11px] mb-2 text-emerald-600 dark:text-emerald-400">Then</h4>
                 
-                <div className="flex gap-4 flex-col sm:flex-row">
-                  <div className="flex-[1]">
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Action</label>
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400">Action</label>
+                  <div className="relative">
                     <select 
-                      className="w-full px-3 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                      className="w-full pl-3 pr-8 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white shadow-sm appearance-none"
                       value={editingRule.action?.type}
                       onChange={e => setEditingRule({
                         ...editingRule, 
@@ -5407,35 +5910,39 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       <option value="mark_spam">Move to Spam</option>
                       <option value="add_flag">Add Flag</option>
                     </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                   </div>
                 </div>
 
                 {(editingRule.action?.type === 'move' || editingRule.action?.type === 'forward' || editingRule.action?.type === 'reject' || editingRule.action?.type === 'add_flag') && (
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">
+                  <div className="space-y-1.5 mt-4">
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400">
                       {editingRule.action?.type === 'move' ? 'Destination Folder' :
                        editingRule.action?.type === 'forward' ? 'Forwarding Email' :
                        editingRule.action?.type === 'add_flag' ? 'Flag Value' : 'Rejection Message'}
                     </label>
                     {editingRule.action?.type === 'move' ? (
-                      <select 
-                        className="w-full px-3 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white shadow-sm"
-                        value={editingRule.action?.value}
-                        onChange={e => setEditingRule({
-                          ...editingRule, 
-                          action: { ...editingRule.action!, value: e.target.value }
-                        })}
-                      >
-                        <option value="Trash">Trash</option>
-                        <option value="Spam">Spam</option>
-                        <option value="Archive">Archive</option>
-                        <option value="Inbox">Inbox</option>
-                        <option disabled>──────</option>
-                        {Array.from(new Set(mailboxes.map(m => m.name).filter(n => !['Trash', 'Spam', 'Junk Mail', 'Archive', 'Inbox'].includes(n)))).map(m => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                        <option value="__custom__">+ Or type a custom folder name</option>
-                      </select>
+                      <div className="relative">
+                        <select 
+                          className="w-full pl-3 pr-8 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white shadow-sm appearance-none"
+                          value={editingRule.action?.value}
+                          onChange={e => setEditingRule({
+                            ...editingRule, 
+                            action: { ...editingRule.action!, value: e.target.value }
+                          })}
+                        >
+                          <option value="Trash">Trash</option>
+                          <option value="Spam">Spam</option>
+                          <option value="Archive">Archive</option>
+                          <option value="Inbox">Inbox</option>
+                          <option disabled>──────</option>
+                          {Array.from(new Set(mailboxes.map(m => m.name).filter(n => !['Trash', 'Spam', 'Junk Mail', 'Archive', 'Inbox'].includes(n)))).map(m => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                          <option value="__custom__">+ Or type a custom folder name</option>
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                      </div>
                     ) : (
                       <input
                         type="text"
@@ -5444,7 +5951,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           editingRule.action?.type === 'add_flag' ? "\\\\Flagged or MyCustomTag" :
                           "Your message was rejected."
                         }
-                        className="w-full px-4 py-2.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white shadow-sm"
+                        className="w-full px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white shadow-sm"
                         value={editingRule.action?.value || ''}
                         onChange={e => setEditingRule({
                           ...editingRule, 
@@ -5458,7 +5965,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         type="text"
                         autoFocus
                         placeholder="Type new folder name..."
-                        className="w-full px-4 py-2.5 mt-3 bg-white dark:bg-black border border-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.1)] rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 dark:text-white"
+                        className="w-full px-4 py-2.5 mt-3 bg-white dark:bg-slate-900 border-2 border-emerald-500 rounded-xl focus:ring-2 focus:ring-emerald-500/50 outline-none text-slate-900 dark:text-white shadow-sm"
                         onChange={e => setEditingRule({
                           ...editingRule, 
                           action: { ...editingRule.action!, value: e.target.value }
@@ -5497,7 +6004,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     
                     setCustomRules(updatedRules);
                     localStorage.setItem('webmail_custom_rules', JSON.stringify(updatedRules));
-                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, updatedRules);
+                    compileAndPushSieve(filterPromotions, filterSocial, filterUpdates, filterReports, filterOnlyContacts, updatedRules);
                     setIsRuleModalOpen(false);
                   }}
                   className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
@@ -5563,7 +6070,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
             <form onSubmit={handleCreateContact} className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">First Name *</label>
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "firstName")} *</label>
                   <input 
                     type="text" 
                     value={newContact.firstName}
@@ -5585,7 +6092,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   {contactErrors.firstName && <p className="text-[10px] font-bold text-red-500 mt-1 uppercase tracking-tight">{contactErrors.firstName}</p>}
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Last Name</label>
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "lastName")}</label>
                   <input 
                     type="text" 
                     value={newContact.lastName}
@@ -5597,7 +6104,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Email Address *</label>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "emailAddress")} *</label>
                 <div className="flex gap-2">
                   <input 
                     type="email" 
@@ -5632,7 +6139,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Phone</label>
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "phone")}</label>
                   <div className="flex gap-2">
                     <input 
                       type="tel" 
@@ -5653,7 +6160,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Organization</label>
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "organization")}</label>
                   <input 
                     type="text" 
                     value={newContact.organization}
@@ -5665,7 +6172,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               </div>
               
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Notes</label>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "notes")}</label>
                 <textarea 
                   value={newContact.notes}
                   onChange={e => setNewContact({...newContact, notes: e.target.value})}
@@ -5688,7 +6195,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   className="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  Save Contact
+                  {t(language, 'save')}
                 </button>
               </div>
             </form>
@@ -5707,7 +6214,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
             </div>
             <form onSubmit={handleCreateEvent} className="p-6 space-y-4">
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Event Title</label>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "eventTitle")}</label>
                 <input 
                   required
                   type="text" 
@@ -5718,7 +6225,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Location</label>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "location")}</label>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input 
@@ -5732,7 +6239,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Start Date</label>
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "startDate")}</label>
                   <input 
                     required
                     type="date" 
@@ -5742,7 +6249,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Start Time</label>
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "startTime")}</label>
                   <input 
                     required
                     type="time" 
@@ -5753,7 +6260,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 </div>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Description</label>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "description")}</label>
                 <textarea 
                   value={newEvent.description}
                   onChange={e => setNewEvent({...newEvent, description: e.target.value})}
@@ -5776,7 +6283,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   className="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  Save Event
+                  {t(language, 'save')}
                 </button>
               </div>
             </form>
@@ -5978,7 +6485,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input 
                   type="text"
-                  placeholder="Search contacts..."
+                  placeholder={t(language, 'searchInContacts')}
                   value={contactPickerSearch}
                   onChange={(e) => setContactPickerSearch(e.target.value)}
                   className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-xl text-sm outline-none ring-2 ring-transparent focus:ring-indigo-500/20"
@@ -6166,7 +6673,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       className="flex-1 px-4 py-4 bg-indigo-600 text-white font-bold rounded-2xl shadow-xl shadow-indigo-500/20 hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
                     >
                       {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                      Save
+                      {t(language, 'save')}
                     </button>
                   </>
                 ) : (
