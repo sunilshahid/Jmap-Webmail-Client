@@ -2139,6 +2139,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       
       const inboxMailbox = mapped.find(m => m.role === 'inbox');
       if (inboxMailbox) {
+         if (previousInboxUnreadRef.current !== null && inboxMailbox.unread > previousInboxUnreadRef.current) {
+            client.getLatestEmail().then(latestEmail => {
+              if (latestEmail) triggerNewEmailNotification(latestEmail);
+            }).catch(e => console.error("Could not fetch latest email for notification", e));
+         }
          previousInboxUnreadRef.current = inboxMailbox.unread;
       }
       
@@ -2409,26 +2414,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     const client = new JmapClient(credentials);
     let debounceTimer: any = null;
     
-    const connected = client.connectWebSocket(async (changes) => {
+    const connected = client.connectWebSocket((changes) => {
       // Whenever we get a StateChange from the server, we seamlessly fetch updates
-      // We debounce by 1500ms to allow the server's index to fully commit, and batch multiple rapid StateChanges
-      if (changes.Email) {
-        try {
-          const latestEmail = await client.getLatestEmail();
-          // Verify it's genuinely new and unread
-          if (latestEmail && !latestEmail.read && latestEmail.id !== lastNotifiedEmailIdRef.current) {
-            // Very fuzzy timing check: is it from the last 2 minutes?
-            const emailTime = new Date(latestEmail.date).getTime();
-            if (Date.now() - emailTime < 120000) {
-              lastNotifiedEmailIdRef.current = latestEmail.id;
-              triggerNewEmailNotification(latestEmail);
-            }
-          }
-        } catch (e) {
-          console.error("Failed to fetch latest email on state change", e);
-        }
-      }
-
+      // This eliminates the need for manual refreshing
+      
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         syncMailRef.current();
@@ -2490,6 +2479,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         prevEmails.map(e => e.id === email.id ? { ...e, read: true } : e)
       );
       
+      // THE FIX: Optimistic Mailbox Update
+      setMailboxes(prev => prev.map(m => m.id === email.mailboxId ? { ...m, unread: Math.max(0, m.unread - 1) } : m));
+
       // B. Update Stalwart via JMAP proxy
       try {
         const client = new JmapClient(credentials);
@@ -2503,6 +2495,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
             }
           }, "0"]
         ]);
+        
+        // C. Trigger a background sync to lock in the true server state
+        fetchMailboxes();
       } catch (error) {
         console.error("Failed to mark email as read on server", error);
       }
@@ -2511,6 +2506,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
   const handleUpdateEmailKeywords = async (emailId: string, keywords: Record<string, boolean | null>) => {
     if (!credentials) return;
+    
+    // Optimistic Mailbox Update for toolbar buttons
+    const targetEmail = emails.find(e => e.id === emailId);
+    if (targetEmail) {
+      const wasRead = targetEmail.read;
+      const isRead = keywords["$seen"] === true;
+      const isUnread = keywords["$seen"] === null;
+      
+      if (!wasRead && isRead) {
+        setMailboxes(prev => prev.map(m => m.id === targetEmail.mailboxId ? { ...m, unread: Math.max(0, m.unread - 1) } : m));
+      } else if (wasRead && isUnread) {
+        setMailboxes(prev => prev.map(m => m.id === targetEmail.mailboxId ? { ...m, unread: m.unread + 1 } : m));
+      }
+    }
+
     const client = new JmapClient(credentials);
     try {
       await client.call([
