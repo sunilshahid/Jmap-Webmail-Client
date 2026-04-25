@@ -2275,7 +2275,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       } catch (e) {}
     };
     fetchJobs();
-    const interval = setInterval(fetchJobs, 10000);
+    const interval = setInterval(fetchJobs, 3000);
     return () => clearInterval(interval);
   }, [credentials]);
 
@@ -2404,14 +2404,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     fetchEmails(selectedMailbox, false);
   }, [selectedMailbox, fetchEmails]);
 
-  // Polling interval fallback (every 5 minutes) since we use WebSockets for real-time
+  // Polling interval fallback (every 10 seconds) since WebSockets auth might fail in browsers out-of-the-box
   useEffect(() => {
     if (!selectedMailbox) return;
     const intervalId = setInterval(() => {
       fetchEmails(selectedMailbox, true);
-    }, 300000);
+      fetchMailboxes();
+    }, 3000); // 3 seconds polling for near real-time updates
     return () => clearInterval(intervalId);
-  }, [selectedMailbox, fetchEmails]);
+  }, [selectedMailbox, fetchEmails, fetchMailboxes]);
 
   const handleEmailClick = async (email: Email) => {
     const mailbox = mailboxes.find(m => m.id === email.mailboxId);
