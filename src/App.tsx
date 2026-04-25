@@ -1143,7 +1143,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
   const previousInboxUnreadRef = useRef<number | null>(null);
 
-  const triggerNewEmailNotification = useCallback(() => {
+  const triggerNewEmailNotification = useCallback((email?: any) => {
     if (soundEffectsEnabled) {
       const audio = new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=message-incoming-132126.mp3');
       audio.volume = 0.8;
@@ -1151,8 +1151,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
     if (notificationsEnabled && "Notification" in window && Notification.permission === "granted") {
       try {
-        new Notification("New Email", {
-          body: "You have a new message in your Inbox.",
+        const title = email ? `New email from ${email.from?.name || email.from?.email || 'Unknown'}` : "New Email";
+        const body = email ? `${email.subject}\n${email.preview}` : "You have a new message in your Inbox.";
+        new Notification(title, {
+          body: body,
+          icon: '/vite.svg'
         });
       } catch (e) {
         console.error("Failed to show notification:", e);
@@ -2136,14 +2139,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       
       const inboxMailbox = mapped.find(m => m.role === 'inbox');
       if (inboxMailbox) {
-         if (previousInboxUnreadRef.current !== null && inboxMailbox.unread > previousInboxUnreadRef.current) {
-            triggerNewEmailNotification();
-         }
          previousInboxUnreadRef.current = inboxMailbox.unread;
       }
       
-      if (mapped.length > 0 && !selectedMailbox) {
-        setSelectedMailbox(mapped.find((m: any) => m.icon === 'Inbox')?.id || mapped[0].id);
+      if (mapped.length > 0) {
+        setSelectedMailbox(prev => prev || mapped.find((m: any) => m.icon === 'Inbox')?.id || mapped[0].id);
       }
       return mapped;
     } catch (err) {
@@ -2151,7 +2151,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       toast.error(err instanceof Error ? err.message : String(err));
       throw err;
     }
-  }, [credentials, selectedMailbox, triggerNewEmailNotification]);
+  }, [credentials, triggerNewEmailNotification]);
 
   useEffect(() => {
     fetchMailboxes();
@@ -2366,8 +2366,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
   }, [credentials, mailboxes]);
 
+  const isSyncingRef = useRef(false);
+  const syncRequestedRef = useRef(false);
+
   const syncMail = async () => {
-    if (isSyncing) return;
+    if (isSyncingRef.current) {
+      syncRequestedRef.current = true;
+      return;
+    }
+    isSyncingRef.current = true;
     setIsSyncing(true);
     try {
       await fetchMailboxes();
@@ -2378,9 +2385,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     } catch (err) {
       console.error("Sync failed", err);
     } finally {
+      isSyncingRef.current = false;
       setIsSyncing(false);
+      if (syncRequestedRef.current) {
+        syncRequestedRef.current = false;
+        setTimeout(() => syncMailRef.current(), 1000);
+      }
     }
   };
+
+  const syncMailRef = useRef(syncMail);
+  useEffect(() => {
+    syncMailRef.current = syncMail;
+  }, [syncMail]);
+
+  const lastNotifiedEmailIdRef = useRef<string | null>(null);
 
   // Real-time WebSocket connection
   useEffect(() => {
@@ -2388,31 +2407,50 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     
     // We instantiate a long-lived client simply for the WebSocket
     const client = new JmapClient(credentials);
-    const connected = client.connectWebSocket((changes) => {
+    let debounceTimer: any = null;
+    
+    const connected = client.connectWebSocket(async (changes) => {
       // Whenever we get a StateChange from the server, we seamlessly fetch updates
-      // This eliminates the need for manual refreshing
-      syncMail();
+      // We debounce by 1500ms to allow the server's index to fully commit, and batch multiple rapid StateChanges
+      if (changes.Email) {
+        try {
+          const latestEmail = await client.getLatestEmail();
+          // Verify it's genuinely new and unread
+          if (latestEmail && !latestEmail.read && latestEmail.id !== lastNotifiedEmailIdRef.current) {
+            // Very fuzzy timing check: is it from the last 2 minutes?
+            const emailTime = new Date(latestEmail.date).getTime();
+            if (Date.now() - emailTime < 120000) {
+              lastNotifiedEmailIdRef.current = latestEmail.id;
+              triggerNewEmailNotification(latestEmail);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to fetch latest email on state change", e);
+        }
+      }
+
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        syncMailRef.current();
+      }, 1500);
     });
 
     return () => {
       client.disconnectWebSocket();
     };
-  }, [credentials, selectedMailbox]); // re-bind if credentials or selectedMailbox changes (to ensure syncMail captures the right one)
+  }, [credentials]); // only re-bind when credentials change
 
   // Initial fetch when mailbox changes
+  const prevSelectedMailboxRef = useRef<string | null>(null);
   useEffect(() => {
-    fetchEmails(selectedMailbox, false);
+    if (selectedMailbox && selectedMailbox !== prevSelectedMailboxRef.current) {
+      prevSelectedMailboxRef.current = selectedMailbox;
+      fetchEmails(selectedMailbox, false);
+    }
   }, [selectedMailbox, fetchEmails]);
 
-  // Polling interval fallback (every 10 seconds) since WebSockets auth might fail in browsers out-of-the-box
-  useEffect(() => {
-    if (!selectedMailbox) return;
-    const intervalId = setInterval(() => {
-      fetchEmails(selectedMailbox, true);
-      fetchMailboxes();
-    }, 3000); // 3 seconds polling for near real-time updates
-    return () => clearInterval(intervalId);
-  }, [selectedMailbox, fetchEmails, fetchMailboxes]);
+  // We now rely on the backend proxy for WebSockets instead of short polling
+  // to avoid sending a stream of HTTP requests.
 
   const handleEmailClick = async (email: Email) => {
     const mailbox = mailboxes.find(m => m.id === email.mailboxId);

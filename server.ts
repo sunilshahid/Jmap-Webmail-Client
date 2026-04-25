@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import crypto from "crypto";
+import { WebSocketServer, WebSocket as NodeWebSocket } from "ws";
 
 async function startServer() {
   const app = express();
@@ -418,8 +419,101 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const httpServer = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+  });
+
+  // Setup WebSocket Proxy
+  const wss = new WebSocketServer({ noServer: true });
+
+  httpServer.on('upgrade', (request, socket, head) => {
+    const urlStr = request.url || '';
+    const pathname = urlStr.split('?')[0];
+    if (pathname === '/api/ws-proxy') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    }
+  });
+
+  wss.on('connection', (ws, request) => {
+    let upstreamWs: NodeWebSocket | null = null;
+    
+    ws.on('message', (message) => {
+      try {
+        const data = JSON.parse(message.toString());
+        if (data.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+          
+          // Optionally send a ping frame upstream to keep the backend alive
+          if (upstreamWs && upstreamWs.readyState === upstreamWs.OPEN) {
+            upstreamWs.ping();
+          }
+          return;
+        }
+
+        if (data.type === 'init') {
+          let { websocketUrl, username, password } = data;
+          
+          if (!websocketUrl || !username || !password) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Missing auth or URL' }));
+            return;
+          }
+
+          // Force wss if it's over https
+          if (websocketUrl.includes(':443') && websocketUrl.startsWith('ws://')) {
+            websocketUrl = websocketUrl.replace(/^ws:\/\//i, 'wss://');
+          } else if (websocketUrl.includes('sunilshahid.com') && websocketUrl.startsWith('ws://')) {
+            websocketUrl = websocketUrl.replace(/^ws:\/\//i, 'wss://');
+          }
+
+          const auth = Buffer.from(`${username}:${password}`).toString('base64');
+          
+          upstreamWs = new NodeWebSocket(websocketUrl, "jmap", {
+            headers: {
+              'Authorization': `Basic ${auth}`
+            }
+          });
+
+          upstreamWs.on('open', () => {
+             console.log(`Upstream WebSocket connected to ${websocketUrl}`);
+             ws.send(JSON.stringify({ type: 'init_success' }));
+          });
+
+          upstreamWs.on('message', (upstreamMessage) => {
+             if (ws.readyState === ws.OPEN) {
+                ws.send(upstreamMessage.toString());
+             }
+          });
+
+          upstreamWs.on('close', () => {
+             if (ws.readyState === ws.OPEN) {
+                ws.close();
+             }
+          });
+
+          upstreamWs.on('error', (err) => {
+             console.error('Upstream WS Error:', err);
+             if (ws.readyState === ws.OPEN) {
+                ws.send(JSON.stringify({ type: 'error', message: err.message }));
+             }
+          });
+        } else {
+          // If not init or ping, forward the raw message to upstream
+          if (upstreamWs && upstreamWs.readyState === upstreamWs.OPEN) {
+            upstreamWs.send(message.toString());
+          }
+        }
+      } catch (e) {
+        console.error("WS message error", e);
+      }
+    });
+
+    ws.on('close', () => {
+      if (upstreamWs) {
+        upstreamWs.close();
+      }
+    });
   });
 }
 

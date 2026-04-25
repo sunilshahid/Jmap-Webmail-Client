@@ -230,69 +230,116 @@ export class JmapClient {
     }
 
     if (this.ws) {
-      this.ws.close();
+      try { this.ws.close(); } catch(e){}
     }
 
-    try {
-      const urlObj = new URL(this.account.websocketUrl);
-      
-      // Fix protocols automatically for secure origins
-      if (urlObj.port === "443" && urlObj.protocol === "ws:") {
-        urlObj.protocol = "wss:";
-      } else if (typeof window !== "undefined" && window.location.protocol === "https:" && urlObj.protocol === "ws:") {
-        urlObj.protocol = "wss:";
-      }
+    let isIntentionalClose = false;
+    let reconnectTimer: any = null;
+    let pingTimer: any = null;
 
-      // Embed Basic Auth via URL if credentials are not tokens
-      if (this.account.username && this.account.password) {
-        urlObj.username = encodeURIComponent(this.account.username);
-        urlObj.password = encodeURIComponent(this.account.password);
-      }
+    const connect = () => {
+      try {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const proxyUrl = `${proto}//${window.location.host}/api/ws-proxy`;
+        console.log(`Connecting to proxy WebSocket at ${proxyUrl}...`);
+        
+        this.ws = new window.WebSocket(proxyUrl);
 
-      console.log(`Connecting to JMAP WebSocket at ${urlObj.host}...`);
-      // Standard subprotocol for JMAP is 'jmap'
-      this.ws = new WebSocket(urlObj.toString(), "jmap");
-
-      this.ws.onopen = () => {
-        console.log("JMAP WebSocket Connected successfully.");
-        // We can optionally send an initial 'Core/echo' to test.
-      };
-
-      this.ws.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          
-          if (payload["@type"] === "StateChange") {
-            const changes = payload.changed;
-            // The changes object maps accountId -> { Type: 'new_state' }
-            const accountId = this.account.accountId || "p";
-            const currentAccountChanges = changes[accountId] || 
-                                          changes[this.account.primaryAccounts?.["urn:ietf:params:jmap:mail"] || "p"] ||
-                                          Object.values(changes)[0]; // Fallback to whatever account was changed
-            if (currentAccountChanges) {
-              console.log("WebSocket StateChange received!", currentAccountChanges);
-              onStateChange(currentAccountChanges);
-            }
+        this.ws.onopen = () => {
+          console.log("WebSocket proxy connected. Sending init...");
+          if (this.ws) {
+            this.ws.send(JSON.stringify({
+              type: 'init',
+              websocketUrl: this.account.websocketUrl,
+              username: this.account.username,
+              password: this.account.password
+            }));
           }
-        } catch (err) {
-          console.error("Error parsing WebSocket message:", err);
+          // Send a ping every 30 seconds to keep the connection alive
+          pingTimer = setInterval(() => {
+            if (this.ws && this.ws.readyState === window.WebSocket.OPEN) {
+              this.ws.send(JSON.stringify({ type: 'ping' }));
+            }
+          }, 30000);
+        };
+
+        this.ws.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            
+            if (payload.type === 'init_success') {
+               console.log("Backend successfully connected to JMAP WebSocket.");
+               
+               // Inform JMAP Server to start sending StateChanges
+               if (this.ws && this.ws.readyState === window.WebSocket.OPEN) {
+                 this.ws.send(JSON.stringify({ 
+                   "@type": "WebSocketPushEnable", 
+                   "dataTypes": null 
+                 }));
+               }
+               return;
+            }
+            if (payload.type === 'error') {
+               console.error("Backend WebSocket error:", payload.message);
+               return;
+            }
+            if (payload.type === 'pong') {
+               return;
+            }
+            
+            if (payload["@type"] === "StateChange") {
+              const changes = payload.changed;
+              const accountId = this.account.accountId || "p";
+              const currentAccountChanges = changes[accountId] || 
+                                            changes[this.account.primaryAccounts?.["urn:ietf:params:jmap:mail"] || "p"] ||
+                                            Object.values(changes)[0];
+              if (currentAccountChanges) {
+                console.log("WebSocket StateChange received!", currentAccountChanges);
+                onStateChange(currentAccountChanges);
+              }
+            }
+          } catch (err) {
+            console.error("Error parsing WebSocket message:", err);
+          }
+        };
+
+        this.ws.onerror = (err) => {
+          console.error("Proxy WebSocket Error:", err);
+        };
+
+        this.ws.onclose = () => {
+          console.log("Proxy WebSocket Closed.");
+          clearInterval(pingTimer);
+          this.ws = null;
+          
+          // Reconnect if it wasn't intentional
+          if (!isIntentionalClose) {
+            console.log("Reconnecting in 5 seconds...");
+            reconnectTimer = setTimeout(connect, 5000);
+          }
+        };
+      } catch (e) {
+        console.error("Failed to initialize WebSocket proxy:", e);
+        if (!isIntentionalClose) {
+          reconnectTimer = setTimeout(connect, 5000);
         }
-      };
+      }
+    };
 
-      this.ws.onerror = (err) => {
-        console.error("JMAP WebSocket Error:", err);
-      };
+    connect();
 
-      this.ws.onclose = () => {
-        console.log("JMAP WebSocket Closed.");
+    // Override the instance's disconnect logic so we can set the flag
+    this.disconnectWebSocket = () => {
+      isIntentionalClose = true;
+      clearTimeout(reconnectTimer);
+      clearInterval(pingTimer);
+      if (this.ws) {
+        try { this.ws.close(); } catch(e){}
         this.ws = null;
-      };
+      }
+    };
 
-      return true;
-    } catch (e) {
-      console.error("Failed to initialize WebSocket:", e);
-      return false;
-    }
+    return true;
   }
 
   disconnectWebSocket() {
@@ -451,6 +498,43 @@ export class JmapClient {
         attachments: e.attachments
       };
     });
+  }
+
+  async getLatestEmail(): Promise<Email | null> {
+    const data = await this.call([
+      ["Email/query", {
+        accountId: this.account.accountId,
+        filter: {},
+        sort: [{ property: "receivedAt", isAscending: false }],
+        limit: 1
+      }, "0"],
+      ["Email/get", {
+        accountId: this.account.accountId,
+        "#ids": {
+          resultOf: "0",
+          name: "Email/query",
+          path: "/ids"
+        },
+        properties: ["id", "subject", "from", "to", "preview", "receivedAt", "keywords"]
+      }, "1"]
+    ]);
+
+    const list = data?.methodResponses?.[1]?.[1]?.list;
+    if (!Array.isArray(list) || list.length === 0) return null;
+    
+    const e = list[0];
+    return {
+      id: e.id,
+      mailboxId: "", // Not needed for notification
+      from: e.from?.[0] || { name: "Unknown", email: "" },
+      to: e.to || [],
+      subject: e.subject || "No Subject",
+      preview: e.preview || "No preview available",
+      body: "", // not fetched
+      date: e.receivedAt,
+      read: !!e.keywords?.["$seen"],
+      starred: !!e.keywords?.["$flagged"]
+    };
   }
 
   async getIdentities(): Promise<Identity[]> {
