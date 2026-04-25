@@ -2140,7 +2140,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       const inboxMailbox = mapped.find(m => m.role === 'inbox');
       if (inboxMailbox) {
          if (previousInboxUnreadRef.current !== null && inboxMailbox.unread > previousInboxUnreadRef.current) {
-            client.getLatestEmail().then(latestEmail => {
+            client.getLatestEmail(inboxMailbox.id).then(latestEmail => {
               if (latestEmail) triggerNewEmailNotification(latestEmail);
             }).catch(e => console.error("Could not fetch latest email for notification", e));
          }

@@ -500,11 +500,12 @@ export class JmapClient {
     });
   }
 
-  async getLatestEmail(): Promise<Email | null> {
+  async getLatestEmail(mailboxId?: string): Promise<Email | null> {
+    const filter = mailboxId ? { inMailbox: mailboxId } : {};
     const data = await this.call([
       ["Email/query", {
         accountId: this.account.accountId,
-        filter: {},
+        filter: filter,
         sort: [{ property: "receivedAt", isAscending: false }],
         limit: 1
       }, "0"],
