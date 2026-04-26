@@ -171,7 +171,7 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
     }
   };
 
-  const isImage = (type: string) => type.startsWith('image/');
+  const isImage = (type: string | null | undefined) => type && typeof type === 'string' && type.startsWith('image/');
   const [previews, setPreviews] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -329,7 +329,7 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
             }}
             className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 text-sm font-medium transition-colors"
           >
-            Return to Webmail
+            Return to Stalwart Email
           </button>
         </div>
       </div>
@@ -337,7 +337,7 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
   );
 }
 
-function HtmlEmailViewer({ htmlContent }: { htmlContent: string }) {
+function HtmlEmailViewer({ htmlContent, attachments, credentials }: { htmlContent: string, attachments?: any[], credentials?: any }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -366,9 +366,40 @@ function HtmlEmailViewer({ htmlContent }: { htmlContent: string }) {
              iframeRef.current.style.height = `${doc.body.scrollHeight}px`;
           }
         }, 100);
+
+        // Process inline cid images
+        if (credentials && attachments && attachments.length > 0) {
+          const resolveInlineImages = async () => {
+            const client = new JmapClient(credentials);
+            const imgs = doc.querySelectorAll('img');
+            for (let i = 0; i < imgs.length; i++) {
+              const img = imgs[i];
+              const src = img.getAttribute('src');
+              if (src && src.startsWith('cid:')) {
+                const cid = src.substring(4);
+                const attachment = attachments.find((a: any) => a.cid === `<${cid}>` || a.cid === cid);
+                if (attachment) {
+                  try {
+                    const blob = await client.getAttachmentBlob(attachment.blobId, attachment.name, attachment.type);
+                    const objectUrl = URL.createObjectURL(blob);
+                    img.src = objectUrl;
+                    img.onload = () => {
+                      if (iframeRef.current && doc.body) {
+                        iframeRef.current.style.height = `${doc.body.scrollHeight}px`;
+                      }
+                    };
+                  } catch (e) {
+                    console.error("Failed to load inline image", e);
+                  }
+                }
+              }
+            }
+          };
+          resolveInlineImages();
+        }
       }
     }
-  }, [htmlContent]);
+  }, [htmlContent, attachments, credentials]);
 
   return (
     <iframe 
@@ -380,7 +411,7 @@ function HtmlEmailViewer({ htmlContent }: { htmlContent: string }) {
   );
 }
 
-function AttachmentRenderer({ attachment, client }: { attachment: any, client: JmapClient, key?: any }) {
+function AttachmentRenderer({ attachment, credentials, language }: { attachment: any, credentials: any, language: string, key?: any }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
@@ -388,6 +419,8 @@ function AttachmentRenderer({ attachment, client }: { attachment: any, client: J
   useEffect(() => {
     let currentUrl: string | null = null;
     const fetchBlob = async () => {
+      if (!credentials) return;
+      const client = new JmapClient(credentials);
       setIsLoading(true);
       try {
         const blob = await client.getAttachmentBlob(attachment.blobId, attachment.name, attachment.type);
@@ -404,7 +437,7 @@ function AttachmentRenderer({ attachment, client }: { attachment: any, client: J
     return () => {
       if (currentUrl) URL.revokeObjectURL(currentUrl);
     };
-  }, [attachment, client]);
+  }, [attachment, credentials]);
 
   if (isLoading) {
     return (
@@ -417,7 +450,7 @@ function AttachmentRenderer({ attachment, client }: { attachment: any, client: J
 
   if (!objectUrl) return null;
 
-  if (attachment.type.startsWith('image/')) {
+  if (attachment.type && typeof attachment.type === 'string' && attachment.type.startsWith('image/')) {
     return (
       <div className="mt-4 group relative inline-block">
         <img 
@@ -644,7 +677,7 @@ export default function App() {
             </div>
           </div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-slate-900 dark:text-white">
-            {isAddingAccount ? "Add Another Account" : "Proton-style Webmail"}
+            {isAddingAccount ? "Add Another Account" : "Stalwart Email"}
           </h2>
           <p className="mt-2 text-center text-sm text-slate-600 dark:text-slate-400">
             Connect to your Stalwart or JMAP-compatible server
@@ -1155,7 +1188,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         const body = email ? `${email.subject}\n${email.preview}` : "You have a new message in your Inbox.";
         new Notification(title, {
           body: body,
-          icon: '/vite.svg'
+          icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f46e5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='20' height='16' x='2' y='4' rx='2'/%3E%3Cpath d='m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7'/%3E%3C/svg%3E"
         });
       } catch (e) {
         console.error("Failed to show notification:", e);
@@ -2890,7 +2923,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
             <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center shadow-sm">
               <Mail className="w-5 h-5 text-white" />
             </div>
-            <span>Webmail</span>
+            <span>Email</span>
           </div>
           <button 
             className="md:hidden p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
@@ -3823,24 +3856,42 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         </div>
 
                         <div className="mt-8 overflow-x-auto max-w-none">
-                          <HtmlEmailViewer htmlContent={DOMPurify.sanitize(selectedEmail.body || "<em>No content</em>", { WHOLE_DOCUMENT: true, ADD_TAGS: ['style', 'head', 'html', 'meta', 'title', 'body'], ADD_ATTR: ['target', 'style', 'class'] })} />
+                          <HtmlEmailViewer 
+  htmlContent={DOMPurify.sanitize(selectedEmail.body || "<em>No content</em>", { WHOLE_DOCUMENT: true, ADD_TAGS: ['style', 'head', 'html', 'meta', 'title', 'body'], ADD_ATTR: ['target', 'style', 'class'] })} 
+  attachments={selectedEmail.attachments}
+  credentials={credentials}
+/>
                         </div>
 
-                        {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
-                          <div className="mt-8">
-                            <hr className="my-6 border-slate-200 dark:border-slate-800" />
-                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Attachments ({selectedEmail.attachments.length})</h3>
-                            <div className="flex flex-wrap gap-4">
-                              {selectedEmail.attachments.map((att: any, idx: number) => (
-                                <AttachmentRenderer 
-                                  key={idx} 
-                                  attachment={att} 
-                                  client={new JmapClient(credentials)} 
-                                />
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        {(() => {
+                           const htmlStr = selectedEmail.body || "";
+                           const visibleAttachments = selectedEmail.attachments ? selectedEmail.attachments.filter((a: any) => {
+                             // If no CID, we show it because it cannot be referenced as inline via cid: in HTML anyway.
+                             if (!a.cid) return true; 
+                             const rawCid = a.cid.replace(/[<>]/g, '');
+                             // Only hide it if the HTML body ACTUALLY contains a cid: reference to it
+                             return !htmlStr.includes(`cid:${rawCid}`);
+                           }) : [];
+                           
+                           if (visibleAttachments.length === 0) return null;
+                           
+                           return (
+                             <div className="mt-8">
+                               <hr className="my-6 border-slate-200 dark:border-slate-800" />
+                               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Attachments ({visibleAttachments.length})</h3>
+                               <div className="flex flex-wrap gap-4">
+                                 {visibleAttachments.map((att: any, idx: number) => (
+                                   <AttachmentRenderer 
+                                     key={idx} 
+                                     attachment={att} 
+                                     credentials={credentials} 
+                                     language={language}
+                                   />
+                                 ))}
+                               </div>
+                             </div>
+                           );
+                        })()}
                       </div>
                     </div>
                     

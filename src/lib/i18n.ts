@@ -1,5 +1,6 @@
 export const translations: Record<string, Record<string, string>> = {
   "English (US)": {
+    "appTitle": "Stalwart Email",
     "mail": "Mail", "contacts": "Contacts", "calendar": "Calendar", "settings": "Settings",
     "inbox": "Inbox", "sent": "Sent", "drafts": "Drafts", "trash": "Trash", "spam": "Spam", "archive": "Archive",
     "generalSettings": "General Settings", "language": "Language", "timezone": "Timezone", "signOut": "Sign Out",

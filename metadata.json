@@ -1,5 +1,5 @@
 {
-  "name": "JMAP Webmail Client",
+  "name": "Stalwart Email",
   "description": "A modern, responsive webmail client inspired by root-fr/jmap-webmail, built with React, Tailwind CSS, and Lucide icons.",
   "requestFramePermissions": []
 }
