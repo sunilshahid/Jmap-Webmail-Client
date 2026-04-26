@@ -409,13 +409,14 @@ export class JmapClient {
     });
   }
 
-  async getEmails(mailboxId: string): Promise<Email[]> {
+  async getEmails(mailboxId: string, limit: number = 50, position: number = 0): Promise<Email[]> {
     const data = await this.call([
       ["Email/query", {
         accountId: this.account.accountId,
         filter: { inMailbox: mailboxId },
         sort: [{ property: "receivedAt", isAscending: false }],
-        limit: 50
+        position: position,
+        limit: limit
       }, "0"],
       ["Email/get", {
         accountId: this.account.accountId,

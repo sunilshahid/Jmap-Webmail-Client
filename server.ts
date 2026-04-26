@@ -248,7 +248,9 @@ async function startServer() {
         }
       }
 
-      console.log(`JMAP API Proxy: ${targetUrl}`);
+      console.log(`JMAP API Proxy: POST ${targetUrl}`);
+      // Add server-side logging for the payload (developer mode equivalent)
+      console.log(`[Server-Side Log] JMAP REQUEST Payload:`, JSON.stringify(payload, null, 2));
 
       const response = await fetch(targetUrl, {
         method: 'POST',
@@ -267,6 +269,7 @@ async function startServer() {
       }
       
       const data = await response.json();
+      console.log(`[Server-Side Log] JMAP RESPONSE:`, JSON.stringify(data).substring(0, 500) + '... (truncated)');
       res.json(data);
     } catch (e: any) {
       console.error("JMAP API Error:", e.message);

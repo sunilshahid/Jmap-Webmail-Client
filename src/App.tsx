@@ -846,6 +846,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date | null>(null);
   const [currentCalendarDate, setCurrentCalendarDate] = useState<Date>(new Date());
@@ -1656,6 +1657,16 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     setPullDistance(0);
   };
 
+  const handleEmailListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    // Load more when user is within 100px of the bottom
+    if (target.scrollHeight - target.scrollTop - target.clientHeight < 100) {
+      if (filteredEmails.length > 0 && filteredEmails.length % 50 === 0 && !isLoadingMore) {
+        loadMoreEmails();
+      }
+    }
+  };
+
   const handleSwitchAccountAndClose = (index: number) => {
     onSwitchAccount(index);
     setIsAccountMenuOpen(false);
@@ -2403,6 +2414,33 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       setIsSyncing(false);
     }
   }, [credentials, mailboxes]);
+
+  const loadMoreEmails = async () => {
+    if (!selectedMailbox || !credentials || isLoading || isLoadingMore) return;
+    
+    let targetMailboxId = selectedMailbox;
+    if (selectedMailbox === 'virtual-scheduled') {
+      const draftsId = mailboxes.find(m => m.role === 'drafts')?.id;
+      if (!draftsId) return;
+      targetMailboxId = draftsId;
+    }
+
+    setIsLoadingMore(true);
+    try {
+      const client = new JmapClient(credentials);
+      const newEmails = await client.getEmails(targetMailboxId, 50, emails.length);
+      if (newEmails.length > 0) {
+        setEmails(prev => [...prev, ...newEmails]);
+      } else {
+        toast.info("No more emails to load");
+      }
+    } catch (err) {
+      console.error("Failed to fetch more emails", err);
+      toast.error("Failed to load more emails");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
 
   const isSyncingRef = useRef(false);
   const syncRequestedRef = useRef(false);
@@ -3311,6 +3349,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   onTouchStart={handleTouchStart}
                   onTouchMove={handleTouchMove}
                   onTouchEnd={handleTouchEnd}
+                  onScroll={handleEmailListScroll}
                 >
                   {/* Sticky Header */}
                   <div className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-[#050505]/80 backdrop-blur-md">
@@ -3427,8 +3466,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       <p className="text-sm mt-1 text-slate-400 dark:text-slate-500">{t(language, 'youReAllCaughtUp') === 'youReAllCaughtUp' ? "You're all caught up!" : t(language, 'youReAllCaughtUp')}</p>
                     </div>
                   ) : (
-                    <ul className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                      { (filteredEmails || []).map((email) => {
+                    <>
+                      <ul className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                        { (filteredEmails || []).map((email) => {
                         const folder = mailboxes.find(m => m.id === selectedMailbox);
                         const isTemplateFolder = folder?.role === 'templates' || folder?.name.toLowerCase() === 'templates';
                         
@@ -3585,6 +3625,19 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         );
                       })}
                     </ul>
+                    {filteredEmails.length > 0 && filteredEmails.length % 50 === 0 && (
+                      <div className="p-4 flex justify-center border-t border-slate-100 dark:border-slate-800">
+                        <button
+                          onClick={loadMoreEmails}
+                          disabled={isLoadingMore}
+                          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-full text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {isLoadingMore && <Loader2 className="w-4 h-4 animate-spin" />}
+                          {isLoadingMore ? "Loading..." : "Load More"}
+                        </button>
+                      </div>
+                    )}
+                    </>
                   )}
                 </div>
               </div>
@@ -3863,35 +3916,22 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 />
                         </div>
 
-                        {(() => {
-                           const htmlStr = selectedEmail.body || "";
-                           const visibleAttachments = selectedEmail.attachments ? selectedEmail.attachments.filter((a: any) => {
-                             // If no CID, we show it because it cannot be referenced as inline via cid: in HTML anyway.
-                             if (!a.cid) return true; 
-                             const rawCid = a.cid.replace(/[<>]/g, '');
-                             // Only hide it if the HTML body ACTUALLY contains a cid: reference to it
-                             return !htmlStr.includes(`cid:${rawCid}`);
-                           }) : [];
-                           
-                           if (visibleAttachments.length === 0) return null;
-                           
-                           return (
-                             <div className="mt-8">
-                               <hr className="my-6 border-slate-200 dark:border-slate-800" />
-                               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Attachments ({visibleAttachments.length})</h3>
-                               <div className="flex flex-wrap gap-4">
-                                 {visibleAttachments.map((att: any, idx: number) => (
-                                   <AttachmentRenderer 
-                                     key={idx} 
-                                     attachment={att} 
-                                     credentials={credentials} 
-                                     language={language}
-                                   />
-                                 ))}
-                               </div>
-                             </div>
-                           );
-                        })()}
+                        {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
+                          <div className="mt-8">
+                            <hr className="my-6 border-slate-200 dark:border-slate-800" />
+                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Attachments ({selectedEmail.attachments.length})</h3>
+                            <div className="flex flex-wrap gap-4">
+                              {selectedEmail.attachments.map((att: any, idx: number) => (
+                                <AttachmentRenderer 
+                                  key={idx} 
+                                  attachment={att} 
+                                  credentials={credentials} 
+                                  language={language}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                     
