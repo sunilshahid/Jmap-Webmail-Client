@@ -409,11 +409,19 @@ export class JmapClient {
     });
   }
 
-  async getEmails(mailboxId: string, limit: number = 50, position: number = 0): Promise<Email[]> {
+  async getEmails(mailboxId: string | null, limit: number = 50, position: number = 0, keyword?: string): Promise<Email[]> {
+    const filterParams: any = {};
+    if (mailboxId) {
+      filterParams.inMailbox = mailboxId;
+    }
+    if (keyword) {
+      filterParams.hasKeyword = keyword;
+    }
+
     const data = await this.call([
       ["Email/query", {
         accountId: this.account.accountId,
-        filter: { inMailbox: mailboxId },
+        filter: Object.keys(filterParams).length > 0 ? filterParams : undefined,
         sort: [{ property: "receivedAt", isAscending: false }],
         position: position,
         limit: limit
@@ -496,7 +504,8 @@ export class JmapClient {
         starred: !!e.keywords?.["$flagged"],
         unsubscribeUrl,
         headers: e.headers,
-        attachments: e.attachments
+        attachments: e.attachments,
+        keywords: e.keywords
       };
     });
   }
@@ -535,7 +544,8 @@ export class JmapClient {
       body: "", // not fetched
       date: e.receivedAt,
       read: !!e.keywords?.["$seen"],
-      starred: !!e.keywords?.["$flagged"]
+      starred: !!e.keywords?.["$flagged"],
+      keywords: e.keywords
     };
   }
 
@@ -571,6 +581,22 @@ export class JmapClient {
       const error = res.methodResponses[0][1].notDestroyed[identityId];
       throw new Error(error.description || `Failed to delete identity: ${error.type}`);
     }
+  }
+
+  async updateEmailKeywords(emailId: string, keywordUpdates: Record<string, boolean | null>): Promise<void> {
+    const updateKeywords: Record<string, boolean | null> = {};
+    for (const [key, value] of Object.entries(keywordUpdates)) {
+      updateKeywords[`keywords/${key}`] = value;
+    }
+    
+    await this.call([
+      ["Email/set", {
+        accountId: this.account.accountId,
+        update: {
+          [emailId]: updateKeywords
+        }
+      }, "0"]
+    ]);
   }
 
   async sendEmail(
@@ -883,7 +909,7 @@ export class JmapClient {
     }
   }
 
-  async createContact(fullName: string, email: string, phone?: string, notes?: string): Promise<Contact> {
+  async createContact(contactData: { firstName: string, lastName?: string, email: string, emailType?: string, phone?: string, phoneType?: string, notes?: string, avatarUrl?: string, organization?: string }): Promise<Contact> {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
     const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
     
@@ -894,9 +920,7 @@ export class JmapClient {
     const addressBooks = abData?.methodResponses?.[0]?.[1]?.list || [];
     const addressBookId = addressBooks.length > 0 ? addressBooks[0].id : "b";
 
-    const nameParts = fullName.trim().split(/\s+/);
-    const firstName = nameParts[0] || "";
-    const lastName = nameParts.slice(1).join(" ");
+    const { firstName, lastName, email, emailType, phone, phoneType, notes, avatarUrl, organization } = contactData;
 
     const contactPayload: any = {
       "@type": "Card",
@@ -910,16 +934,26 @@ export class JmapClient {
         isOrdered: true
       },
       emails: {
-        "e1": { address: email, contexts: { "private": true } }
+        "e1": { address: email, contexts: { [emailType || "private"]: true } }
       },
       ...(phone ? {
         phones: {
-          "p1": { number: phone, contexts: { "private": true } }
+          "p1": { number: phone, contexts: { [phoneType || "private"]: true } }
         }
       } : {})
     };
     if (notes) {
       contactPayload.notes = notes;
+    }
+    if (avatarUrl) {
+      contactPayload.photos = {
+        "ph1": { url: avatarUrl }
+      };
+    }
+    if (organization) {
+      contactPayload.organizations = {
+        "org1": { name: organization }
+      };
     }
 
     const res = await this.call([
@@ -934,6 +968,7 @@ export class JmapClient {
     const createdId = res.methodResponses?.[0]?.[1]?.created?.["new_contact_1"]?.id;
     if (!createdId) throw new Error("Failed to create contact");
 
+    const fullName = [firstName, lastName].filter(Boolean).join(" ");
     return {
       id: createdId,
       fullName: fullName,
@@ -1074,6 +1109,41 @@ export class JmapClient {
     return [];
   }
 
+  async createCalendar(name: string, color?: string): Promise<Calendar> {
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
+    const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
+
+    const data = await this.call([
+      ["Calendar/set", {
+        accountId: calendarAccountId,
+        create: {
+          "new-cal": {
+            name: name,
+            color: color || "#4f46e5"
+          }
+        }
+      }, "0"]
+    ], caps);
+
+    const created = data?.methodResponses?.[0]?.[1]?.created?.["new-cal"];
+    if (!created) throw new Error("Failed to create calendar");
+
+    return {
+      id: created.id,
+      name,
+      color: color || "#4f46e5"
+    };
+  }
+
+  async deleteCalendar(id: string): Promise<void> {
+    const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
+    const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
+
+    await this.call([
+      ["Calendar/set", { accountId: calendarAccountId, destroy: [id] }, "0"]
+    ], caps);
+  }
+
   async getEvents(start: string, end: string): Promise<Event[]> {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"];
     const calendarAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:calendars"] || this.account.accountId || "p";
@@ -1133,11 +1203,11 @@ export class JmapClient {
       }
     }
 
-    if (!calendarIds || Object.keys(calendarIds).length === 0) {
+    if (!event.calendarId && (!calendarIds || Object.keys(calendarIds).length === 0)) {
       throw new Error("No calendar found to add event to");
     }
 
-    const eventPayload = {
+    const eventPayload: any = {
       "@type": "Event",
       uid: event.uid || (Math.random().toString(36).substring(2) + Date.now()),
       calendarIds: calendarIds,
@@ -1145,10 +1215,22 @@ export class JmapClient {
       description: event.description,
       start: event.start,
       duration: event.duration || "PT1H",
-      timeZone: event.timeZone || "UTC",
-      location: event.location
-      // REMOVED 'created' and 'priority' to prevent Stalwart invalidProperties error
+      showWithoutTime: event.showWithoutTime
     };
+
+    if (!event.showWithoutTime) {
+      eventPayload.timeZone = event.timeZone || "UTC";
+    }
+
+    if (event.location) {
+      eventPayload.locations = {
+        "loc1": { "@type": "Location", name: event.location }
+      };
+    }
+    if (event.recurrenceRules) eventPayload.recurrenceRules = event.recurrenceRules;
+    if (event.virtualLocations) eventPayload.virtualLocations = event.virtualLocations;
+    if (event.participants) eventPayload.participants = event.participants;
+    if (event.alerts) eventPayload.alerts = event.alerts;
 
     const response = await this.call([
       ["CalendarEvent/set", {
@@ -1163,7 +1245,8 @@ export class JmapClient {
     
     if (result?.notCreated?.["new-event-1"]) {
         const error = result.notCreated["new-event-1"];
-        throw new Error(error.description || `Failed to create event: ${error.type}`);
+        const invalidProps = error.properties ? ` (Props: ${error.properties.join(', ')})` : '';
+        throw new Error((error.description || `Failed to create event: ${error.type}`) + invalidProps);
     }
 
     const created = result?.created?.["new-event-1"];

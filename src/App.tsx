@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { 
   Inbox, Send, File, AlertCircle, Trash2, Menu, Search, 
   Settings, User, ChevronDown, Star, Archive, MoreVertical,
   Reply, Forward, X, Edit3, Mail, LogOut, Loader2, Server,
   Calendar, Users, RefreshCw, Lock, Clock, Key, Shield, Plus, ExternalLink,
   Sparkles, Download, Upload, Bell, Check, MailCheck, Sun, Filter, ArrowLeft, Paperclip,
-  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile
+  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile, Camera, Globe, Video, MapPin, Link, Copy
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "./lib/utils";
@@ -337,7 +337,7 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
   );
 }
 
-function HtmlEmailViewer({ htmlContent, attachments, credentials }: { htmlContent: string, attachments?: any[], credentials?: any }) {
+function HtmlEmailViewer({ htmlContent, attachments, credentials, isDarkMode }: { htmlContent: string, attachments?: any[], credentials?: any, isDarkMode?: boolean }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -349,13 +349,64 @@ function HtmlEmailViewer({ htmlContent, attachments, credentials }: { htmlConten
         doc.close();
         
         const attachTheme = () => {
-          const isDark = document.documentElement.classList.contains('dark');
-          if (doc.body) {
-            doc.body.style.color = isDark ? '#f8fafc' : '#0f172a';
-            doc.body.style.fontFamily = 'Inter, system-ui, sans-serif';
-            doc.body.style.lineHeight = '1.6';
-            doc.body.style.wordBreak = 'break-word';
-            doc.body.style.margin = '0';
+          let styleEl = doc.getElementById('smart-dark-mode-style');
+          if (!styleEl) {
+            styleEl = doc.createElement('style');
+            styleEl.id = 'smart-dark-mode-style';
+            if (doc.head) doc.head.appendChild(styleEl);
+          }
+          
+          if (isDarkMode) {
+            // For dark mode, set text white and background transparent
+            styleEl.innerHTML = `
+              :root {
+                color-scheme: dark;
+              }
+              html {
+                background-color: transparent !important;
+              }
+              body {
+                color: #f8fafc !important;
+                background-color: transparent !important;
+                margin: 0;
+                font-family: Inter, system-ui, sans-serif;
+                line-height: 1.6;
+                word-break: break-word;
+              }
+              /* Try to prevent white backgrounds on containers in simple emails */
+              .markdown-body, .email-content {
+                background: transparent !important;
+                color: #f8fafc !important;
+              }
+              div, table, td, th {
+                background-color: transparent !important;
+                color: inherit !important;
+              }
+            `;
+            // Also override inline bg colors on the body itself just in case
+            doc.documentElement.style.backgroundColor = 'transparent';
+            doc.body.style.backgroundColor = 'transparent';
+            doc.body.style.color = '#f8fafc';
+          } else {
+            styleEl.innerHTML = `
+              :root {
+                color-scheme: light;
+              }
+              html {
+                background-color: transparent !important;
+              }
+              body {
+                color: #0f172a !important;
+                background-color: transparent !important;
+                margin: 0;
+                font-family: Inter, system-ui, sans-serif;
+                line-height: 1.6;
+                word-break: break-word;
+              }
+            `;
+            doc.documentElement.style.backgroundColor = 'transparent';
+            doc.body.style.backgroundColor = 'transparent';
+            doc.body.style.color = '#0f172a';
           }
         };
         attachTheme();
@@ -399,12 +450,13 @@ function HtmlEmailViewer({ htmlContent, attachments, credentials }: { htmlConten
         }
       }
     }
-  }, [htmlContent, attachments, credentials]);
+  }, [htmlContent, attachments, credentials, isDarkMode]);
 
   return (
     <iframe 
       ref={iframeRef} 
-      className="w-full border-none transition-all duration-300" 
+      className="w-full border-none bg-transparent transition-all duration-300" 
+      style={{ colorScheme: isDarkMode ? 'dark' : 'light' }}
       title="Email Content"
       sandbox="allow-same-origin allow-popups"
     />
@@ -504,6 +556,16 @@ function getMailboxDisplayName(mb: any, language: string) {
   }
   return mb.name;
 }
+
+export const EMAIL_TAGS = [
+  { keyword: '$label:red', name: '', color: 'bg-red-500' },
+  { keyword: '$label:orange', name: '', color: 'bg-orange-500' },
+  { keyword: '$label:yellow', name: '', color: 'bg-yellow-500' },
+  { keyword: '$label:green', name: '', color: 'bg-green-500' },
+  { keyword: '$label:blue', name: '', color: 'bg-blue-500' },
+  { keyword: '$label:purple', name: '', color: 'bg-purple-500' },
+  { keyword: '$label:pink', name: '', color: 'bg-pink-500' },
+];
 
 export default function App() {
   // 1. Synchronous Routing State (Prevents the Login Flash)
@@ -612,13 +674,19 @@ export default function App() {
       // Check if account already exists
       const existingIndex = accounts.findIndex(a => a.username === username && a.serverUrl === serverUrl);
       if (existingIndex >= 0) {
-        const updatedAccounts = [...accounts];
-        updatedAccounts[existingIndex] = newAccount;
-        setAccounts(updatedAccounts);
+        setAccounts(prev => {
+          const updated = [...prev];
+          updated[existingIndex] = newAccount;
+          return updated;
+        });
         setCurrentAccountIndex(existingIndex);
       } else {
-        setAccounts([...accounts, newAccount]);
-        setCurrentAccountIndex(accounts.length);
+        const nextIndex = accounts.length;
+        setAccounts(prev => {
+          const updated = [...prev, newAccount];
+          return updated;
+        });
+        setCurrentAccountIndex(nextIndex);
       }
       
       setIsAddingAccount(false);
@@ -807,6 +875,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [calendars, setCalendars] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [selectedMailbox, setSelectedMailbox] = useState<string>("");
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [identities, setIdentities] = useState<Identity[]>([]);
   const [selectedIdentityId, setSelectedIdentityId] = useState<string>("");
@@ -814,6 +883,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [selectedEmailIds, setSelectedEmailIds] = useState<string[]>([]);
   const [activeApp, setActiveApp] = useState<'mail' | 'contacts' | 'calendar' | 'settings'>('mail');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isTagsExpanded, setIsTagsExpanded] = useState(false);
   const [isComposeOpen, setIsComposeOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [language, setLanguage] = useState(() => localStorage.getItem('webmail_language') || "English (US)");
@@ -822,18 +892,24 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [isTimezoneDropdownOpen, setIsTimezoneDropdownOpen] = useState(false);
   const [contextMenuEmail, setContextMenuEmail] = useState<Email | null>(null);
   const [isEmailActionsOpen, setIsEmailActionsOpen] = useState(false);
+  const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
   const [isContactModalOpen, setIsContactModalOpen] = useState(false);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [isAddCalendarOpen, setIsAddCalendarOpen] = useState(false);
+  const [newCalendarName, setNewCalendarName] = useState("");
+  const [newCalendarColor, setNewCalendarColor] = useState("#4f46e5");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importData, setImportData] = useState("");
   const [contactSuggestions, setContactSuggestions] = useState<any[]>([]);
-  const [newContact, setNewContact] = useState({ firstName: '', lastName: '', email: '', emailType: 'private', phone: '', phoneType: 'private', organization: '', notes: '' });
+  const [newContact, setNewContact] = useState({ firstName: '', lastName: '', email: '', emailType: 'private', phone: '', phoneType: 'private', organization: '', notes: '', photoUrl: '' });
   const [contactErrors, setContactErrors] = useState<Record<string, string>>({});
-  const [newEvent, setNewEvent] = useState({ title: '', description: '', location: '', startDate: format(new Date(), 'yyyy-MM-dd'), startTime: '09:00', endDate: format(new Date(), 'yyyy-MM-dd'), endTime: '10:00', timeZone: timezone });
+  const [newEvent, setNewEvent] = useState({ title: '', description: '', location: '', virtualLocation: '', isAllDay: false, startDate: format(new Date(), 'yyyy-MM-dd'), startTime: '09:00', endDate: format(new Date(), 'yyyy-MM-dd'), endTime: '10:00', timeZone: timezone, recurrence: 'none', invitees: '', calendarId: '', reminder: 'none' });
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [eventModalTab, setEventModalTab] = useState<'details' | 'scheduling'>('details');
   const [eventErrors, setEventErrors] = useState<Record<string, string>>({});
   const [contactSearchQuery, setContactSearchQuery] = useState("");
   const [eventSearchQuery, setEventSearchQuery] = useState("");
-  const [isSettingsSection, setIsSettingsSection] = useState<'general' | 'account' | 'security' | 'advanced' | 'notifications' | 'vacation' | 'templates' | 'filters' | 'contacts'>(() => {
+  const [isSettingsSection, setIsSettingsSection] = useState<'general' | 'account' | 'security' | 'advanced' | 'notifications' | 'vacation' | 'templates' | 'filters' | 'contacts' | 'tags' | 'calendar'>(() => {
     return (localStorage.getItem('webmail_settings_section') as any) || 'account';
   });
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
@@ -847,11 +923,79 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMoreEmails, setHasMoreEmails] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Tags State
+  const [customTags, setCustomTags] = useState<{keyword: string, name: string, color: string}[]>(() => {
+    try {
+      const stored = localStorage.getItem('webmail_custom_tags');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isAddTagModalOpen, setIsAddTagModalOpen] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  const [newTagColor, setNewTagColor] = useState('#3b82f6'); // Default blue
+
+  const allTags = [...EMAIL_TAGS, ...customTags];
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date | null>(null);
   const [currentCalendarDate, setCurrentCalendarDate] = useState<Date>(new Date());
+  const [calendarView, setCalendarView] = useState<'month' | 'week' | 'day' | 'agenda'>(() => (localStorage.getItem('webmail_cal_default_view') || 'Month').toLowerCase() as 'month' | 'week' | 'day' | 'agenda');
+  
+  // Calendar Settings States
+  const [calShowTimeInMonth, setCalShowTimeInMonth] = useState(() => localStorage.getItem('webmail_cal_show_time') === 'true');
+  const [calWeekStartsOn, setCalWeekStartsOn] = useState(() => localStorage.getItem('webmail_cal_week_starts') || 'Monday');
+  const [calShowWeekNumbers, setCalShowWeekNumbers] = useState(() => localStorage.getItem('webmail_cal_week_numbers') === 'true');
+  const [calEventHoverPreview, setCalEventHoverPreview] = useState(() => localStorage.getItem('webmail_cal_hover') || 'Always');
+  const [calContactBirthday, setCalContactBirthday] = useState(() => localStorage.getItem('webmail_cal_birthday') === 'true');
+  const [calEnableTasks, setCalEnableTasks] = useState(() => localStorage.getItem('webmail_cal_tasks') === 'true');
+  const [calDefaultView, setCalDefaultView] = useState(() => localStorage.getItem('webmail_cal_default_view') || 'Month');
+  const [calTimeFormat, setCalTimeFormat] = useState(() => localStorage.getItem('webmail_cal_time_format') || '12-hour');
+  const [icalSubscriptions, setICalSubscriptions] = useState<any[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('webmail_ical_subscriptions') || '[]');
+    } catch {
+      return [];
+    }
+  });
+
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null);
   const [selectedContact, setSelectedContact] = useState<any | null>(null);
+
+  const fetchCalendarsAndEvents = useCallback(async () => {
+    if (!accounts || accounts.length === 0) return;
+    try {
+      let allCals: any[] = [];
+      let allEvents: any[] = [];
+      for (let acc of accounts) {
+        try {
+          const client = new JmapClient(acc);
+          const fetchedCals = await client.getCalendars();
+          allCals.push(...fetchedCals.map((c: any) => ({...c, _accountId: acc.username})));
+          
+          const start = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() - 1, 1).toISOString();
+          const end = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 2, 0).toISOString();
+          
+          const fetchedEvents = await client.getEvents(start, end);
+          allEvents.push(...fetchedEvents.map((e: any) => ({...e, _accountId: acc.username})));
+        } catch (innerErr) {
+          console.error(`Failed to load calendars/events for ${acc.username}:`, innerErr);
+        }
+      }
+      setCalendars(allCals);
+      setEvents(allEvents);
+    } catch (e) {
+      console.error("Failed to load calendars/events:", e);
+    }
+  }, [accounts, currentCalendarDate]);
+
+  useEffect(() => {
+    if (activeApp === 'calendar') {
+      fetchCalendarsAndEvents();
+    }
+  }, [activeApp, currentCalendarDate, fetchCalendarsAndEvents]);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [isContactPickerOpen, setIsContactPickerOpen] = useState(false);
   const [contactPickerSearch, setContactPickerSearch] = useState("");
@@ -1139,6 +1283,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   };
 
   const [isIdentityDropdownOpen, setIsIdentityDropdownOpen] = useState(false);
+  const [isSubAddressModalOpen, setIsSubAddressModalOpen] = useState(false);
   const [isSecureMessage, setIsSecureMessage] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
   const [scheduleTime, setScheduleTime] = useState("");
@@ -1168,22 +1313,44 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   }, [isComposeOpen]);
 
   // Settings & Vacation State
-  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
-    return localStorage.getItem('webmail_notifications') === 'true';
+  const [notificationTone, setNotificationTone] = useState(() => {
+    return localStorage.getItem('webmail_notification_tone') || 'relax';
   });
-  const [soundEffectsEnabled, setSoundEffectsEnabled] = useState(() => {
-    return localStorage.getItem('webmail_sound_effects') === 'true';
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(() => {
+    return localStorage.getItem('webmail_email_notifications') === 'true' || localStorage.getItem('webmail_notifications') === 'true';
+  });
+  const [emailSoundEnabled, setEmailSoundEnabled] = useState(() => {
+    return localStorage.getItem('webmail_email_sound') === 'true' || localStorage.getItem('webmail_sound_effects') === 'true';
+  });
+  const [calendarNotificationsEnabled, setCalendarNotificationsEnabled] = useState(() => {
+    return localStorage.getItem('webmail_calendar_notifications') === 'true';
+  });
+  const [notifiedEventIds, setNotifiedEventIds] = useState<Set<string>>(new Set());
+  const [calendarSoundEnabled, setCalendarSoundEnabled] = useState(() => {
+    return localStorage.getItem('webmail_calendar_sound') === 'true';
+  });
+  const [parseEmailInvitations, setParseEmailInvitations] = useState(() => {
+    return localStorage.getItem('webmail_parse_invitations') !== 'false';
   });
 
   const previousInboxUnreadRef = useRef<number | null>(null);
 
+  const getNotificationAudio = useCallback(() => {
+    const toneUrls: Record<string, string> = {
+      'relax': 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=message-incoming-132126.mp3',
+      'chime': 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8b7cb60f1.mp3?filename=chime-sound-7143.mp3',
+      'ding': 'https://cdn.pixabay.com/download/audio/2022/03/10/audio_510b64d4b2.mp3?filename=correct-2-46134.mp3'
+    };
+    return new Audio(toneUrls[notificationTone] || toneUrls['relax']);
+  }, [notificationTone]);
+
   const triggerNewEmailNotification = useCallback((email?: any) => {
-    if (soundEffectsEnabled) {
-      const audio = new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=message-incoming-132126.mp3');
+    if (emailSoundEnabled) {
+      const audio = getNotificationAudio();
       audio.volume = 0.8;
       audio.play().catch(e => console.log("Audio play blocked", e));
     }
-    if (notificationsEnabled && "Notification" in window && Notification.permission === "granted") {
+    if (emailNotificationsEnabled && "Notification" in window && Notification.permission === "granted") {
       try {
         const title = email ? `New email from ${email.from?.name || email.from?.email || 'Unknown'}` : "New Email";
         const body = email ? `${email.subject}\n${email.preview}` : "You have a new message in your Inbox.";
@@ -1195,7 +1362,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         console.error("Failed to show notification:", e);
       }
     }
-  }, [soundEffectsEnabled, notificationsEnabled]);
+  }, [emailSoundEnabled, emailNotificationsEnabled, getNotificationAudio]);
 
   const currentTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -1236,9 +1403,6 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     localStorage.setItem('webmail_timezone', timezone);
   }, [timezone]);
 
-  useEffect(() => {
-    localStorage.setItem('webmail_sound_effects', soundEffectsEnabled.toString());
-  }, [soundEffectsEnabled]);
 
   const sortedIdentities = [...identities].sort((a, b) => {
     if (a.id === selectedIdentityId) return -1;
@@ -1277,6 +1441,17 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     return "";
   };
 
+  const getContactPhoto = (contact: any): string => {
+    if (!contact) return "";
+    if (contact.avatar) return contact.avatar;
+    if (contact.photoUrl) return contact.photoUrl;
+    if (contact.photos && typeof contact.photos === 'object') {
+      const firstPhoto = Object.values(contact.photos)[0] as any;
+      return firstPhoto?.url || firstPhoto?.uri || "";
+    }
+    return "";
+  };
+
   const filteredEmails = emails.filter(email => {
     // 1. Search Filter
     const query = searchQuery.toLowerCase();
@@ -1310,13 +1485,100 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     );
   });
 
-  const filteredEvents = events.filter(event => {
-    const query = searchQuery.toLowerCase();
+  const allActiveEvents = useMemo(() => {
+    let output = [...events];
+    if (calContactBirthday && contacts && contacts.length > 0) {
+       const currentYear = new Date().getFullYear();
+       contacts.forEach((c: any) => {
+          if (c.anniversaries) {
+             Object.values(c.anniversaries).filter((a: any) => a.kind === 'birth').forEach((ann: any) => {
+                let month, day, year;
+                if (!ann.date) return;
+                
+                if (typeof ann.date === 'string' && ann.date.startsWith('--')) {
+                   const m = ann.date.match(/^--(\d{2})-(\d{2})/);
+                   if (m) { month = parseInt(m[1]); day = parseInt(m[2]); }
+                } else if (typeof ann.date === 'string') {
+                  const d = new Date(ann.date);
+                  if (!isNaN(d.getTime())) { 
+                    month = d.getMonth() + 1; 
+                    day = d.getDate(); 
+                    year = d.getFullYear();
+                  }
+                }
+                if (month && day) {
+                   for (let y = currentYear - 1; y <= currentYear + 2; y++) {
+                      let title = `🎂 ${getContactName(c)}`;
+                      if (year) {
+                        title += ` (${y - year})`;
+                      }
+                      output.push({
+                         id: `birthday-${c.id}-${y}`,
+                         calendarIds: { 'birthday-cal': true },
+                         title,
+                         start: `${y}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T00:00:00`,
+                         showWithoutTime: true,
+                         color: '#eab308' 
+                      });
+                   }
+                }
+             });
+          }
+       });
+    }
+    return output;
+  }, [events, contacts, calContactBirthday]);
+
+  const filteredEvents = allActiveEvents.filter(event => {
+    const query = eventSearchQuery.toLowerCase();
+    if (!query) return true;
     return (
       (event.title || "").toLowerCase().includes(query) ||
       (event.description || "").toLowerCase().includes(query)
     );
   });
+
+  useEffect(() => {
+    if (!calendarNotificationsEnabled || allActiveEvents.length === 0) return;
+
+    if (Notification.permission !== 'granted') return;
+
+    const checkAlerts = () => {
+      const now = Date.now();
+      const upcomingThreshold = 10 * 60 * 1000; // 10 minutes
+
+      allActiveEvents.forEach((event: any) => {
+        if (!event.start && !event.startDate) return;
+        const startMs = new Date(event.start || event.startDate).getTime();
+        if (isNaN(startMs)) return;
+
+        // Check if event starts between now and threshold
+        const timeDiff = startMs - now;
+        
+        if (timeDiff > 0 && timeDiff <= upcomingThreshold) {
+          const alertId = `${event.id}-${startMs}`;
+          if (!notifiedEventIds.has(alertId)) {
+            // Found a new upcoming event to alert for
+            new Notification(`Upcoming: ${event.title}`, {
+              body: `Starting in ${Math.ceil(timeDiff / 60000)} minutes`,
+              icon: '/favicon.ico' // fallback icon
+            });
+            
+            setNotifiedEventIds(prev => {
+              const next = new Set(prev);
+              next.add(alertId);
+              return next;
+            });
+          }
+        }
+      });
+    };
+
+    // Check immediately then every minute
+    checkAlerts();
+    const timer = setInterval(checkAlerts, 60000);
+    return () => clearInterval(timer);
+  }, [allActiveEvents, calendarNotificationsEnabled, notifiedEventIds]);
 
   const handleExportContacts = () => {
     if (contacts.length === 0) {
@@ -1400,17 +1662,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     try {
       if (!credentials) throw new Error("Not logged in");
       const client = new JmapClient(credentials);
-      const fullName = `${newContact.firstName.trim()} ${newContact.lastName.trim()}`.trim();
-      const createdContact = await client.createContact(
-        fullName,
-        newContact.email,
-        newContact.phone,
-        newContact.notes
-      );
+      const createdContact = await client.createContact({
+        firstName: newContact.firstName.trim(),
+        lastName: newContact.lastName.trim(),
+        email: newContact.email.trim(),
+        emailType: newContact.emailType,
+        phone: newContact.phone.trim(),
+        phoneType: newContact.phoneType,
+        organization: newContact.organization.trim(),
+        notes: newContact.notes,
+        avatarUrl: newContact.photoUrl
+      });
 
       setContacts(prev => [...prev, createdContact]);
       setIsContactModalOpen(false);
-      setNewContact({ firstName: '', lastName: '', email: '', emailType: 'private', phone: '', phoneType: 'private', organization: '', notes: '' });
+      setNewContact({ firstName: '', lastName: '', email: '', emailType: 'private', phone: '', phoneType: 'private', organization: '', notes: '', photoUrl: '' });
       setContactErrors({});
       toast.success("Contact created successfully");
     } catch (error: any) {
@@ -1456,7 +1722,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         setIsLoading(true);
         try {
           if (!credentials) throw new Error("Not logged in");
-          const client = new JmapClient(credentials);
+          const ev = events.find(e => e.id === eventId);
+          const accToUse = ev ? accounts.find(a => a.username === ev._accountId) || credentials : credentials;
+          const client = new JmapClient(accToUse);
           await client.deleteEvent(eventId);
           setEvents(prev => prev.filter(e => e.id !== eventId));
           if (selectedEvent?.id === eventId) setSelectedEvent(null);
@@ -1509,7 +1777,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         fullName: getContactName(selectedContact),
         email: email,
         phone: phone,
-        notes: selectedContact.notes || ""
+        organization: (selectedContact.organizations?.[0]?.name || selectedContact.company) || "",
+        notes: selectedContact.notes || "",
+        photoUrl: getContactPhoto(selectedContact)
       });
     } else {
       setEditingContactData(null);
@@ -1538,6 +1808,24 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         },
         notes: editingContactData.notes.trim()
       };
+      
+      if (editingContactData.organization) {
+        patches.organizations = {
+          "org1": { name: editingContactData.organization.trim() }
+        };
+      }
+      
+      if (editingContactData.photoUrl !== undefined) {
+        const photoKey = (selectedContact.photos && typeof selectedContact.photos === 'object' && Object.keys(selectedContact.photos)[0]) || "ph1";
+        patches.photos = {
+          ...selectedContact.photos,
+          [photoKey]: {
+            ...(selectedContact.photos?.[photoKey] || {}),
+             url: editingContactData.photoUrl.trim(),
+             kind: "photo"
+          }
+        };
+      }
       
       if (editingContactData.email.trim()) {
         const emailKey = (selectedContact.emails && typeof selectedContact.emails === 'object' && Object.keys(selectedContact.emails)[0]) || "e1";
@@ -1593,41 +1881,135 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     setIsLoading(true);
     try {
       if (!credentials) throw new Error("Not logged in");
-      const client = new JmapClient(credentials);
       
-      // FIXED: Fallback strictly to 'b' which is Stalwart's default
-      const calendarId = calendars[0]?.id || "b"; 
+      const calendarId = newEvent.calendarId || calendars[0]?.id || "b"; 
+      const selectedCal = calendars.find(c => c.id === calendarId);
+      const accToUse = selectedCal ? accounts.find(a => a.username === selectedCal._accountId) || credentials : credentials;
+      const client = new JmapClient(accToUse);
 
       // FIXED: Generate mandatory UID
       const uid = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : `event-${Date.now()}`;
 
       // FIXED: Calculate ISO 8601 Duration (e.g. "PT1H")
-      const startObj = new Date(`${newEvent.startDate}T${newEvent.startTime}`);
-      const endObj = new Date(`${newEvent.endDate}T${newEvent.endTime}`);
-      let diffMins = Math.floor((endObj.getTime() - startObj.getTime()) / 60000);
-      if (diffMins <= 0) diffMins = 60; // Default 1 hr
-      const hours = Math.floor(diffMins / 60);
-      const mins = diffMins % 60;
-      const durationStr = `PT${hours > 0 ? hours + 'H' : ''}${mins > 0 ? mins + 'M' : ''}`;
+      let startObj, endObj, diffMins, durationStr, startStr;
+      
+      if (newEvent.isAllDay) {
+        startObj = new Date(newEvent.startDate);
+        endObj = new Date(newEvent.endDate);
+        // Duration in days
+        let diffDays = Math.round((endObj.getTime() - startObj.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays <= 0) diffDays = 1;
+        durationStr = `P${diffDays}D`;
+        startStr = `${newEvent.startDate}T00:00:00`;
+      } else {
+        startObj = new Date(`${newEvent.startDate}T${newEvent.startTime}`);
+        endObj = new Date(`${newEvent.endDate}T${newEvent.endTime}`);
+        diffMins = Math.floor((endObj.getTime() - startObj.getTime()) / 60000);
+        if (diffMins <= 0) diffMins = 60; // Default 1 hr
+        const hours = Math.floor(diffMins / 60);
+        const mins = diffMins % 60;
+        durationStr = `PT${hours > 0 ? hours + 'H' : ''}${mins > 0 ? mins + 'M' : ''}`;
+        startStr = `${newEvent.startDate}T${newEvent.startTime}:00`;
+      }
 
-      const createdEvent = await client.createEvent({
-        calendarIds: { [calendarId]: true }, // FIXED: Flattened map structure
-        uid: uid,                            // FIXED: Mandatory UID
+      let finalDescription = newEvent.description || "";
+      let virtualLocationsObj: any = undefined;
+      if (newEvent.virtualLocation) {
+        virtualLocationsObj = {
+          "vl_1": {
+            "@type": "VirtualLocation",
+            "name": "Meeting Link",
+            "uri": newEvent.virtualLocation
+          }
+        };
+      }
+
+      let participantsObj: any = undefined;
+      if (newEvent.invitees) {
+        participantsObj = {};
+        newEvent.invitees.split(',').forEach((email, idx) => {
+          participantsObj[`p_${idx}`] = {
+            "@type": "Participant",
+            "name": email.trim(),
+            "email": email.trim(),
+            "roles": { "attendee": true },
+            "participationStatus": "needs-action"
+          };
+        });
+      }
+
+      let recurrenceRules = undefined;
+      if (newEvent.recurrence && newEvent.recurrence !== 'none' && newEvent.recurrence !== 'custom') {
+        recurrenceRules = [{
+          "@type": "RecurrenceRule",
+          frequency: newEvent.recurrence
+        }];
+      }
+
+      let alertsObj: any = undefined;
+      if (newEvent.reminder && newEvent.reminder !== 'none') {
+        alertsObj = {
+          "a_1": {
+            "@type": "Alert",
+            "trigger": {
+              "@type": "OffsetTrigger",
+              "offset": `-PT${newEvent.reminder}M`
+            }
+          }
+        };
+      }
+
+      const isEditing = !!editingEventId;
+      const payloadFields: any = {
+        calendarIds: { [calendarId]: true },
         title: newEvent.title,
-        description: newEvent.description,
-        start: `${newEvent.startDate}T${newEvent.startTime}:00`,
-        timeZone: newEvent.timeZone,
-        duration: durationStr                // FIXED: Mandatory duration
-      });
+        description: newEvent.description || "",
+        start: startStr,
+        duration: durationStr,               // FIXED: Mandatory duration
+        showWithoutTime: newEvent.isAllDay,
+        recurrenceRules: recurrenceRules
+      };
 
-      setEvents(prev => [...prev, createdEvent]);
+      if (!newEvent.isAllDay) {
+        payloadFields.timeZone = newEvent.timeZone || "UTC";
+      } else {
+        payloadFields.timeZone = null;
+      }
+
+      if (!isEditing) {
+        payloadFields.uid = uid; // uid cannot be updated
+      }
+
+      if (newEvent.location) {
+        payloadFields.locations = {
+          "loc1": { "@type": "Location", name: newEvent.location }
+        };
+      } else {
+        payloadFields.locations = null; // unset if empty
+      }
+
+      if (virtualLocationsObj) payloadFields.virtualLocations = virtualLocationsObj;
+      if (participantsObj) payloadFields.participants = participantsObj;
+      if (alertsObj) payloadFields.alerts = alertsObj;
+
+      if (editingEventId) {
+        await client.updateEvent(editingEventId, payloadFields);
+        setEvents(prev => prev.map(e => e.id === editingEventId ? { ...e, ...payloadFields, id: editingEventId } : e));
+        setSelectedEvent({ ...selectedEvent, ...payloadFields });
+        toast.success("Event updated successfully");
+      } else {
+        const createdEvent = await client.createEvent(payloadFields);
+        setEvents(prev => [...prev, createdEvent]);
+        toast.success("Event created successfully");
+      }
+
       setIsEventModalOpen(false);
-      setNewEvent({ title: '', description: '', location: '', startDate: format(new Date(), 'yyyy-MM-dd'), startTime: '09:00', endDate: format(new Date(), 'yyyy-MM-dd'), endTime: '10:00', timeZone: timezone });
+      setEditingEventId(null);
+      setNewEvent({ title: '', description: '', location: '', virtualLocation: '', isAllDay: false, startDate: format(new Date(), 'yyyy-MM-dd'), startTime: '09:00', endDate: format(new Date(), 'yyyy-MM-dd'), endTime: '10:00', timeZone: timezone, recurrence: 'none', invitees: '', calendarId: '' });
       setEventErrors({});
-      toast.success("Event created successfully");
     } catch (error: any) {
-      console.error("Failed to create event:", error);
-      toast.error(`Failed to create event: ${error.message}`);
+      console.error(editingEventId ? "Failed to update event:" : "Failed to create event:", error);
+      toast.error(editingEventId ? `Failed to update event: ${error.message}` : `Failed to create event: ${error.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -1661,7 +2043,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     const target = e.target as HTMLDivElement;
     // Load more when user is within 100px of the bottom
     if (target.scrollHeight - target.scrollTop - target.clientHeight < 100) {
-      if (filteredEmails.length > 0 && filteredEmails.length % 50 === 0 && !isLoadingMore) {
+      if (hasMoreEmails && !isLoadingMore && filteredEmails.length >= 50) {
         loadMoreEmails();
       }
     }
@@ -1677,6 +2059,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [toAddresses, setToAddresses] = useState<string[]>([]);
   const [toInput, setToInput] = useState('');
   const [subject, setSubject] = useState('');
+  const [composeSubAddress, setComposeSubAddress] = useState<string>('');
   const [isSending, setIsSending] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<Array<{file?: File, blobId: string, name: string, type: string, size: number}>>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -1819,6 +2202,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
         const client = new JmapClient(credentials);
 
+        const fromEmail = composeSubAddress && identity.email
+          ? `${identity.email.split('@')[0]}+${composeSubAddress}@${identity.email.split('@')[1]}`
+          : identity.email;
+
         // 2. Safely create the draft (Secure emails have NO standard attachments)
         const actualDraftId = await client.createDraft(
           finalToAddresses,           // to
@@ -1827,7 +2214,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           undefined,                  // cc
           undefined,                  // bcc
           identityId,                 // identityId
-          identity.email,             // fromEmail
+          fromEmail,             // fromEmail
           undefined,                  // draftId
           isSecure ? [] : draftAttachments.filter(a => a.blobId), // THE FIX: No standard att if secure
           identity.name               // fromName
@@ -1877,6 +2264,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         body: emailBody,
         attachments: [...draftAttachments],
         selectedIdentityId,
+        composeSubAddress,
         isSecure: isSecureMessage,
         secureConfig: isSecureMessage ? {
           useAutomaticKey,
@@ -2041,6 +2429,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               size: att.size
             }));
 
+      const fromEmail = emailData.composeSubAddress && identity.email
+        ? `${identity.email.split('@')[0]}+${emailData.composeSubAddress}@${identity.email.split('@')[1]}`
+        : identity.email;
+
       await client.sendEmail(
         emailData.toAddresses,
         finalSubject,
@@ -2048,7 +2440,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         undefined, // cc
         undefined, // bcc
         identityId, // identityId
-        identity.email, // <-- THE FIX: Pass the actual email address
+        fromEmail, // <-- THE FIX: Pass the actual email address
         undefined, // draftId
         identity.name, // <-- THE FIX: Pass the display name
         standardAttachments
@@ -2281,7 +2673,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     const loadSettings = async () => {
       try {
         // Load browser-specific settings
-        setNotificationsEnabled(Notification.permission === 'granted');
+        if (Notification.permission === 'granted' && localStorage.getItem('webmail_email_notifications') !== 'false') {
+          setEmailNotificationsEnabled(true);
+        }
       } catch (e) {
         console.error("Failed to load settings", e);
       }
@@ -2374,8 +2768,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   };
 
   // Fetch Emails Function
-  const fetchEmails = useCallback(async (mailboxId: string, background = false) => {
-    if (!mailboxId || !credentials) return;
+  const fetchEmails = useCallback(async (mailboxId: string | null, background = false, tagKeyword: string | null = null) => {
+    if (!credentials) return;
     const callerUsername = credentials.username;
     
     // THE FIX: Intercept virtual mailboxes
@@ -2391,13 +2785,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
     try {
       const client = new JmapClient(credentials);
-      const mapped = await client.getEmails(targetMailboxId); // Use intercepted ID
+      // Wait, getEmails supports keyword now. Add it here.
+      const mapped = await client.getEmails(targetMailboxId, 50, 0, tagKeyword || undefined); 
       
       if (currentUsernameRef.current !== callerUsername) {
         return;
       }
 
       setEmails(mapped);
+      setHasMoreEmails(mapped.length === 50);
       if (!background) setSelectedEmail(null);
       setLastSync(new Date());
     } catch (err) {
@@ -2416,7 +2812,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   }, [credentials, mailboxes]);
 
   const loadMoreEmails = async () => {
-    if (!selectedMailbox || !credentials || isLoading || isLoadingMore) return;
+    if ((!selectedMailbox && !selectedTagId) || !credentials || isLoading || isLoadingMore) return;
     
     let targetMailboxId = selectedMailbox;
     if (selectedMailbox === 'virtual-scheduled') {
@@ -2428,11 +2824,12 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     setIsLoadingMore(true);
     try {
       const client = new JmapClient(credentials);
-      const newEmails = await client.getEmails(targetMailboxId, 50, emails.length);
+      const newEmails = await client.getEmails(targetMailboxId || null, 50, emails.length, selectedTagId || undefined);
       if (newEmails.length > 0) {
         setEmails(prev => [...prev, ...newEmails]);
+        setHasMoreEmails(newEmails.length === 50);
       } else {
-        toast.info("No more emails to load");
+        setHasMoreEmails(false);
       }
     } catch (err) {
       console.error("Failed to fetch more emails", err);
@@ -2500,14 +2897,20 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     };
   }, [credentials]); // only re-bind when credentials change
 
-  // Initial fetch when mailbox changes
+  // Initial fetch when mailbox or tag changes
   const prevSelectedMailboxRef = useRef<string | null>(null);
+  const prevSelectedTagRef = useRef<string | null>(null);
   useEffect(() => {
     if (selectedMailbox && selectedMailbox !== prevSelectedMailboxRef.current) {
       prevSelectedMailboxRef.current = selectedMailbox;
-      fetchEmails(selectedMailbox, false);
+      prevSelectedTagRef.current = null;
+      fetchEmails(selectedMailbox, false, null);
+    } else if (selectedTagId && selectedTagId !== prevSelectedTagRef.current) {
+      prevSelectedTagRef.current = selectedTagId;
+      prevSelectedMailboxRef.current = null;
+      fetchEmails(null, false, selectedTagId);
     }
-  }, [selectedMailbox, fetchEmails]);
+  }, [selectedMailbox, selectedTagId, fetchEmails]);
 
   // We now rely on the backend proxy for WebSockets instead of short polling
   // to avoid sending a stream of HTTP requests.
@@ -2594,14 +2997,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
     const client = new JmapClient(credentials);
     try {
-      await client.call([
-        ["Email/set", {
-          accountId: credentials.accountId,
-          update: {
-            [emailId]: { keywords }
-          }
-        }, "0"]
-      ]);
+      await client.updateEmailKeywords(emailId, keywords);
       // Update local state
       setEmails(prev => prev.map(e => {
         if (e.id === emailId) {
@@ -2723,8 +3119,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     const client = new JmapClient(credentials);
     try {
       const update: Record<string, any> = {};
+      const patchKeywords: Record<string, boolean | null> = {};
+      for (const [key, value] of Object.entries(keywords)) {
+        patchKeywords[`keywords/${key}`] = value;
+      }
+      
       emailIds.forEach(id => {
-        update[id] = { keywords };
+        update[id] = patchKeywords;
       });
 
       await client.call([
@@ -3134,6 +3535,41 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
             })}
           </ul>
 
+          <div 
+            className="px-4 mt-4 mb-2 flex items-center justify-between cursor-pointer group"
+            onClick={() => setIsTagsExpanded(!isTagsExpanded)}
+          >
+            <span className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-widest transition-colors">
+              Tags
+            </span>
+            <ChevronDown className={cn("w-4 h-4 text-slate-400 dark:text-slate-500 transition-transform duration-200", !isTagsExpanded && "-rotate-90")} />
+          </div>
+          {isTagsExpanded && (
+            <ul className="space-y-1.5 px-3 mb-4">
+              {allTags.map((tag) => (
+                <li key={tag.keyword}>
+                  <button
+                    onClick={() => {
+                      setSelectedTagId(tag.keyword);
+                      setSelectedMailbox("");
+                      setActiveApp('mail');
+                      setIsSidebarOpen(false);
+                    }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl transition-all group",
+                      selectedTagId === tag.keyword && activeApp === 'mail'
+                        ? "bg-indigo-100 dark:bg-[#1a1c2e] text-indigo-700 dark:text-indigo-300"
+                        : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-[#11131f]"
+                    )}
+                  >
+                    <div className={`w-5 h-5 rounded-full shrink-0 ${tag.color} opacity-80 group-hover:opacity-100 transition-opacity`} style={{ backgroundColor: tag.color.startsWith('#') ? tag.color : undefined }} />
+                    <span className="text-[16px] font-bold tracking-wide truncate capitalize">{tag.name || tag.keyword.replace('$label:', '').replace(/-/g, ' ')}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
           <div className="px-4 mt-2 mb-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
             Apps
           </div>
@@ -3417,9 +3853,16 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         <div className="flex flex-col">
                           <h2 className="font-bold text-lg text-slate-800 dark:text-white flex items-center gap-2 truncate max-w-[200px] sm:max-w-none">
                             {selectedMailbox === 'virtual-scheduled' && <Clock className="w-5 h-5 text-indigo-500" />}
-                            {selectedMailbox === 'virtual-scheduled' 
-                              ? getTranslation(language, "scheduled") 
-                              : getMailboxDisplayName(mailboxes.find(m => m.id === selectedMailbox), language)}
+                            {selectedTagId && (
+                                <div className={`w-3 h-3 rounded-full flex items-center justify-center shrink-0 ${allTags.find(t => t.keyword === selectedTagId)?.color} text-white font-bold text-[8px]`} style={{ backgroundColor: allTags.find(t => t.keyword === selectedTagId)?.color.startsWith('#') ? allTags.find(t => t.keyword === selectedTagId)?.color : undefined }}>
+                                  {allTags.find(t => t.keyword === selectedTagId)?.name}
+                                </div>
+                            )}
+                            {selectedTagId
+                              ? allTags.find(t => t.keyword === selectedTagId)?.keyword.replace('$label:', '') || 'Tag'
+                              : selectedMailbox === 'virtual-scheduled' 
+                                ? getTranslation(language, "scheduled") 
+                                : getMailboxDisplayName(mailboxes.find(m => m.id === selectedMailbox), language)}
                           </h2>
                           <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
                             {(() => {
@@ -3498,7 +3941,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 <div className="absolute left-0 top-0 bottom-0 w-[4px] bg-indigo-600 dark:bg-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.6)]" />
                               )}
                               
-                              <div className="pt-1 shrink-0">
+                              <div className="pt-1 shrink-0 flex flex-col gap-2">
                                 <button 
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -3512,6 +3955,18 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                   )}
                                 >
                                   {selectedEmailIds.includes(email.id) && <Check className="w-3.5 h-3.5 text-white" />}
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleStar(email);
+                                  }}
+                                  className={cn(
+                                    "w-5 h-5 flex items-center justify-center transition-colors",
+                                    email.starred ? "text-yellow-400" : "text-slate-300 dark:text-slate-700 hover:text-yellow-400/50"
+                                  )}
+                                >
+                                  <Star className={cn("w-4 h-4", email.starred && "fill-current")} />
                                 </button>
                               </div>
                               <div className="flex-1 min-w-0">
@@ -3535,6 +3990,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                     </div>
                                   )}
                                   <div className="flex items-center gap-2 ml-auto">
+                                    {allTags.filter(tag => email.keywords?.[tag.keyword]).map(tag => (
+                                      <div key={tag.keyword} className={`w-3 h-3 rounded-full flex items-center justify-center shrink-0 ${tag.color} text-white font-bold text-[8px] opacity-80`} style={{ backgroundColor: tag.color.startsWith('#') ? tag.color : undefined }} title={tag.keyword}>
+                                        {tag.name}
+                                      </div>
+                                    ))}
                                     <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap mt-0.5 font-medium">
                                       {formatDistanceToNow(new Date(email.date), { addSuffix: true })}
                                     </span>
@@ -3625,16 +4085,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         );
                       })}
                     </ul>
-                    {filteredEmails.length > 0 && filteredEmails.length % 50 === 0 && (
-                      <div className="p-4 flex justify-center border-t border-slate-100 dark:border-slate-800">
-                        <button
-                          onClick={loadMoreEmails}
-                          disabled={isLoadingMore}
-                          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-full text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
-                        >
-                          {isLoadingMore && <Loader2 className="w-4 h-4 animate-spin" />}
-                          {isLoadingMore ? "Loading..." : "Load More"}
-                        </button>
+                    {hasMoreEmails && filteredEmails.length >= 50 && (
+                      <div className="p-6 flex justify-center">
+                        {isLoadingMore && <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />}
                       </div>
                     )}
                     </>
@@ -3715,6 +4168,48 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         >
                           <BellOff className="w-[18px] h-[18px]" />
                         </button>
+
+                        <div className="relative inline-block text-left">
+                          <button
+                            onClick={() => setIsTagDropdownOpen(!isTagDropdownOpen)}
+                            className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors relative"
+                            title="Tags"
+                          >
+                            <Tag className="w-[18px] h-[18px]" />
+                          </button>
+                          
+                          {isTagDropdownOpen && (
+                            <>
+                              <div className="fixed inset-0 z-40" onClick={() => setIsTagDropdownOpen(false)} />
+                              <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-[#11131f] border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-50 py-2 animate-in fade-in zoom-in-95 duration-150">
+                                <div className="px-3 pb-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest border-b border-slate-100 dark:border-slate-800 mb-2">
+                                  Apply Tags
+                                </div>
+                                {allTags.map((tag) => {
+                                  const isActive = selectedEmail.keywords?.[tag.keyword] === true;
+                                  return (
+                                    <button
+                                      key={tag.keyword}
+                                      onClick={() => {
+                                        handleUpdateEmailKeywords(selectedEmail.id, { [tag.keyword]: isActive ? null : true });
+                                        setIsTagDropdownOpen(false);
+                                      }}
+                                      className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-[#050505] flex items-center justify-between"
+                                    >
+                                      <div className="flex items-center gap-3">
+                                        <div className={`w-3 h-3 rounded-full flex items-center justify-center shrink-0 ${tag.color} text-white font-bold text-[8px]`} style={{ backgroundColor: tag.color.startsWith('#') ? tag.color : undefined }}>
+                                          {tag.name}
+                                        </div>
+                                        <span className="font-mono text-slate-700 dark:text-slate-300">{tag.keyword.replace('$label:', '')}</span>
+                                      </div>
+                                      {isActive && <Check className="w-4 h-4 text-indigo-500" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-1">
                         <div className="relative">
@@ -3773,6 +4268,12 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               {selectedEmail.subject}
                             </h1>
                             <div className="flex flex-wrap items-center gap-2 mt-2">
+                              {allTags.filter(tag => selectedEmail.keywords?.[tag.keyword]).map(tag => (
+                                <span key={tag.keyword} className={`px-2 py-0.5 ${tag.color} text-white text-[10px] font-bold rounded uppercase tracking-wider flex items-center gap-1 opacity-90`} style={{ backgroundColor: tag.color.startsWith('#') ? tag.color : undefined }} title={tag.keyword}>
+                                  {tag.name && <span className="mr-0.5">{tag.name}</span>}
+                                  {tag.keyword.replace('$label:', '')}
+                                </span>
+                              ))}
                               <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[10px] font-bold rounded uppercase tracking-wider">
                                 {mailboxes.find(m => m.id === selectedMailbox)?.name || "Message"}
                               </span>
@@ -3913,6 +4414,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   htmlContent={DOMPurify.sanitize(selectedEmail.body || "<em>No content</em>", { WHOLE_DOCUMENT: true, ADD_TAGS: ['style', 'head', 'html', 'meta', 'title', 'body'], ADD_ATTR: ['target', 'style', 'class'] })} 
   attachments={selectedEmail.attachments}
   credentials={credentials}
+  isDarkMode={isDarkMode}
 />
                         </div>
 
@@ -4096,9 +4598,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             />
                           </div>
                           <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-xl shrink-0 shadow-inner">
-                              {getContactName(contact).charAt(0).toUpperCase()}
-                            </div>
+                            {getContactPhoto(contact) ? (
+                              <img src={getContactPhoto(contact)} alt={getContactName(contact)} className="w-12 h-12 rounded-2xl object-cover shadow-inner shrink-0" />
+                            ) : (
+                              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-xl shrink-0 shadow-inner">
+                                {getContactName(contact).charAt(0).toUpperCase()}
+                              </div>
+                            )}
                             <div className="min-w-0">
                               <h3 className="font-semibold text-slate-900 dark:text-white truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{getContactName(contact)}</h3>
                               {getContactEmail(contact) && <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{getContactEmail(contact)}</p>}
@@ -4149,152 +4655,879 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           )}
 
           {activeApp === 'calendar' && (
-            <div className="flex-1 flex flex-col bg-slate-50 dark:bg-black overflow-hidden">
-              <div className="flex-1 overflow-y-auto">
-                <div className="sticky top-0 z-20 p-6 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-black/80 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Calendar</h1>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">{format(currentCalendarDate, 'MMMM yyyy')}</p>
+            <div className="flex-1 flex flex-col md:flex-row bg-slate-50 dark:bg-black overflow-hidden h-full">
+              {/* Calendar Sidebar (Desktop) */}
+              <div className="w-64 lg:w-72 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-[#14151a] hidden md:flex flex-col p-5 overflow-y-auto shrink-0">
+                <button 
+                  onClick={() => setIsEventModalOpen(true)}
+                  className="w-full flex items-center justify-center gap-2 bg-[#ad57ff] hover:bg-[#9745e6] text-white font-bold py-3 px-4 rounded-xl shadow-sm transition-all active:scale-95 mb-8"
+                >
+                  <Plus className="w-5 h-5" /> New Event
+                </button>
+                
+                <div className="mb-8">
+                  <div className="flex items-center justify-between mb-4 px-1">
+                    <span className="font-bold text-[15px] text-slate-800 dark:text-white">
+                      {format(currentCalendarDate, 'MMMM yyyy')}
+                    </span>
+                    <div className="flex gap-1">
+                      <button 
+                        className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 transition-colors" 
+                        onClick={() => setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() - 1, 1))}
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <button 
+                        className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 transition-colors" 
+                        onClick={() => setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 1))}
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() - 1, 1))}
-                      className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"
-                    >
-                      <ChevronLeft className="w-5 h-5" />
-                    </button>
-                    <button 
-                      onClick={() => setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 1))}
-                      className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"
-                    >
-                      <ChevronRight className="w-5 h-5" />
-                    </button>
-                    <button 
-                      onClick={async () => {
-                        setIsSyncing(true);
-                        try {
-                          const client = new JmapClient(credentials);
-                          const startOfMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1).toISOString();
-                          const endOfMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 0).toISOString();
-                          const list = await client.getEvents(startOfMonth, endOfMonth);
-                          setEvents(list);
-                          toast.success("Calendar refreshed");
-                        } catch (e) {
-                          toast.error("Failed to refresh calendar");
-                        } finally {
-                          setIsSyncing(false);
-                          setLastSync(new Date());
-                        }
-                      }}
-                      className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"
-                      title="Refresh calendar"
-                    >
-                      <RefreshCw className={cn("w-5 h-5", isSyncing && "animate-spin")} />
-                    </button>
+                  
+                  {/* Mini Calendar Grid (Static visual) */}
+                  <div className={cn("grid gap-1 text-center mb-2", calShowWeekNumbers ? "grid-cols-8" : "grid-cols-7")}>
+                    {calShowWeekNumbers && <div className="text-[10px] font-bold text-slate-300 dark:text-slate-600">W</div>}
+                    {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => {
+                       const showDay = calWeekStartsOn === 'Monday' ? ['M', 'T', 'W', 'T', 'F', 'S', 'S'][i] : day;
+                       return <div key={i} className="text-[10px] font-bold text-slate-400">{showDay}</div>
+                    })}
+                  </div>
+                  <div className={cn("grid gap-1 text-center", calShowWeekNumbers ? "grid-cols-8" : "grid-cols-7")}>
+                    {(() => {
+                      const startOfMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1);
+                      let startDay = startOfMonth.getDay();
+                      if (calWeekStartsOn === 'Monday') {
+                        startDay = startDay === 0 ? 6 : startDay - 1;
+                      }
+                      const daysInMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 0).getDate();
+                      const now = new Date();
+                      
+                      const totalCells = Math.ceil((startDay + daysInMonth) / 7) * 7;
+                      return Array.from({ length: totalCells }).map((_, i) => {
+                        const dayNum = i - startDay + 1;
+                        const isCurrentMonth = dayNum > 0 && dayNum <= daysInMonth;
+                        const isToday = isCurrentMonth && dayNum === now.getDate() && currentCalendarDate.getMonth() === now.getMonth() && currentCalendarDate.getFullYear() === now.getFullYear();
+                        
+                        // Week number is at the start of each row (i % 7 === 0)
+                        const showWeekNum = calShowWeekNumbers && i % 7 === 0;
+
+                        return (
+                          <React.Fragment key={i}>
+                            {showWeekNum && (
+                              <div className="aspect-square flex items-center justify-center text-[9px] font-bold text-slate-300 dark:text-slate-600">
+                                {Math.floor(i / 7) + 1}
+                              </div>
+                            )}
+                            {!isCurrentMonth ? (
+                               <div className="aspect-square"></div>
+                            ) : (
+                              <button 
+                                onClick={() => setSelectedCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), dayNum))}
+                                className={cn(
+                                  "aspect-square flex items-center justify-center text-[11px] rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+                                  isToday ? "bg-purple-600 text-white font-bold hover:bg-purple-700 dark:hover:bg-purple-500" : "text-slate-700 dark:text-slate-300"
+                                )}
+                              >
+                                {dayNum}
+                              </button>
+                            )}
+                          </React.Fragment>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+
+                <div className="flex-1 w-full border-t border-slate-100 dark:border-slate-800/60 pt-4 overflow-y-auto custom-scrollbar pr-2 pb-6">
+                  <div className="mb-6">
+                    <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-2 flex justify-between items-center group transition-colors hover:text-slate-500">
+                      My Calendars
+                      <button 
+                        onClick={() => setIsAddCalendarOpen(true)}
+                        className="hover:text-purple-500 p-1 rounded-md hover:bg-slate-200 dark:hover:bg-slate-700/50 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100" 
+                        title="Add calendar"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </h3>
+                    <div className="space-y-0.5">
+                      {(calendars || []).filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).map((calendar, idx) => (
+                        <div key={idx} className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors">
+                          <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-transform group-active:scale-90" style={{ backgroundColor: calendar.color || '#9333ea' }}>
+                          </div>
+                          <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate tracking-wide">{calendar.name || "Calendar"}</span>
+                        </div>
+                      ))}
+                      {calContactBirthday && (
+                        <div className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors">
+                          <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-transform group-active:scale-90 bg-yellow-500">
+                          </div>
+                          <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate tracking-wide">Birthdays</span>
+                        </div>
+                      )}
+                      {!(calendars || []).filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).length && !calContactBirthday && (
+                        <div className="text-xs text-slate-500 px-2 py-2">No calendars found.</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mb-6">
+                    <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-2 flex justify-between items-center group cursor-pointer transition-colors hover:text-slate-500" title="CalDAV Discovery">
+                      Shared (CalDAV)
+                      <button className="hover:text-indigo-500 p-1 rounded-md hover:bg-slate-200 dark:hover:bg-slate-700/50 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100">
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </h3>
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors">
+                        <div className="w-4 h-4 rounded border-2 border-emerald-500 flex items-center justify-center shrink-0 transition-transform group-active:scale-90">
+                        </div>
+                        <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate tracking-wide opacity-80">Team Events</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-2 flex justify-between items-center group cursor-pointer transition-colors hover:text-slate-500" title="iCal/Webcal Batch Import">
+                      Subscriptions
+                    </h3>
+                    <div className="space-y-0.5">
+                      {icalSubscriptions.map((sub, idx) => (
+                        <div key={idx} className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors">
+                          <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-transform group-active:scale-90" style={{ backgroundColor: sub.color || '#f97316' }}>
+                          </div>
+                          <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate tracking-wide opacity-80">{sub.name}</span>
+                        </div>
+                      ))}
+                      {icalSubscriptions.length === 0 && (
+                        <div className="px-2 py-1 text-xs text-slate-500">No subscriptions</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Calendar View */}
+              <div className="flex-1 flex flex-col bg-white dark:bg-black overflow-hidden relative">
+                <div className="sticky top-0 z-20 px-3 py-3 md:px-6 md:py-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-black/95 backdrop-blur-md flex flex-col gap-3 md:gap-4 shrink-0">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1 sm:gap-2">
+                      <button 
+                        onClick={() => {
+                          if (calendarView === 'month') {
+                            setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() - 1, 1));
+                          } else if (calendarView === 'week') {
+                            setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), currentCalendarDate.getDate() - 7));
+                          } else if (calendarView === 'day' || calendarView === 'agenda') {
+                            setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), currentCalendarDate.getDate() - 1));
+                          }
+                        }}
+                        className="p-1.5 md:p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-all"
+                      >
+                        <ChevronLeft className="w-5 h-5 md:w-6 md:h-6" />
+                      </button>
+                      <h1 className="text-[19px] md:text-2xl font-bold text-slate-900 dark:text-white pointer-events-none">
+                        {format(currentCalendarDate, calendarView === 'day' || calendarView === 'agenda' ? 'MMM d, yyyy' : 'MMMM yyyy')}
+                      </h1>
+                      <button 
+                        onClick={() => {
+                          if (calendarView === 'month') {
+                            setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 1));
+                          } else if (calendarView === 'week') {
+                            setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), currentCalendarDate.getDate() + 7));
+                          } else if (calendarView === 'day' || calendarView === 'agenda') {
+                            setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), currentCalendarDate.getDate() + 1));
+                          }
+                        }}
+                        className="p-1.5 md:p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-all"
+                      >
+                        <ChevronRight className="w-5 h-5 md:w-6 md:h-6" />
+                      </button>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={async () => {
+                          setIsSyncing(true);
+                          try {
+                            const client = new JmapClient(credentials);
+                            const startOfMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1).toISOString();
+                            const endOfMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 0).toISOString();
+                            const list = await client.getEvents(startOfMonth, endOfMonth);
+                            setEvents(list);
+                            toast.success("Calendar refreshed");
+                          } catch (e) {
+                            toast.error("Failed to refresh calendar");
+                          } finally {
+                            setIsSyncing(false);
+                            setLastSync(new Date());
+                          }
+                        }}
+                        className="p-2 md:p-2.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-indigo-600 rounded-xl transition-all hidden sm:block"
+                        title="Refresh calendar"
+                      >
+                        <RefreshCw className={cn("w-5 h-5", isSyncing && "animate-spin")} />
+                      </button>
+                      <button 
+                        onClick={() => setIsEventModalOpen(true)}
+                        className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-500/30 rounded-xl md:hidden transition-colors"
+                      >
+                        <Plus className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 rounded-xl p-1 flex-1 overflow-x-auto no-scrollbar shadow-inner">
+                       <button onClick={() => setCalendarView('month')} className={cn("flex-1 px-3 py-1.5 md:py-2 text-[13px] md:text-sm font-bold rounded-lg transition-colors whitespace-nowrap outline-none", calendarView === 'month' ? "shadow-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300")}>Month</button>
+                       <button onClick={() => setCalendarView('week')} className={cn("flex-1 px-3 py-1.5 md:py-2 text-[13px] md:text-sm font-bold rounded-lg transition-colors whitespace-nowrap outline-none", calendarView === 'week' ? "shadow-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300")}>Week</button>
+                       <button onClick={() => setCalendarView('day')} className={cn("flex-1 px-3 py-1.5 md:py-2 text-[13px] md:text-sm font-bold rounded-lg transition-colors whitespace-nowrap outline-none", calendarView === 'day' ? "shadow-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300")}>Day</button>
+                       <button onClick={() => setCalendarView('agenda')} className={cn("flex-1 px-3 py-1.5 md:py-2 text-[13px] md:text-sm font-bold rounded-lg transition-colors whitespace-nowrap outline-none", calendarView === 'agenda' ? "shadow-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300")}>Agenda</button>
+                       {calEnableTasks && (
+                         <button onClick={() => setCalendarView('tasks' as any)} className={cn("flex-1 px-3 py-1.5 md:py-2 text-[13px] md:text-sm font-bold rounded-lg transition-colors whitespace-nowrap outline-none", calendarView === 'tasks' as any ? "shadow-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300")}>Tasks</button>
+                       )}
+                    </div>
+                    
                     <button 
                       onClick={() => setCurrentCalendarDate(new Date())}
-                      className="px-4 py-2 bg-white dark:bg-[#11131f] border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
+                      className="px-4 py-1.5 md:py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-xl text-[13px] md:text-sm font-bold transition-all shadow-sm shrink-0 outline-none"
                     >
                       Today
                     </button>
-                    <button 
-                      onClick={() => setIsEventModalOpen(true)}
-                      className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95"
-                    >
-                      <Plus className="w-5 h-5" />
-                    </button>
                   </div>
                 </div>
-                <div className="p-6">
-                  {/* Mock Calendar Grid */}
-                  <div className="bg-white dark:bg-[#050505] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-                    <div className="grid grid-cols-7 border-b border-slate-200 dark:border-slate-800">
-                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                        <div key={day} className="p-3 text-center text-xs font-bold text-slate-400 uppercase tracking-wider border-r border-slate-100 dark:border-slate-800 last:border-0">
-                          {day}
+                
+                <div className="flex-1 overflow-y-auto p-2 md:p-6 custom-scrollbar bg-slate-50/80 dark:bg-[#050505]">
+                  <div className="bg-white dark:bg-[#0d0e15] rounded-3xl border border-slate-200/60 dark:border-slate-800/60 shadow-sm flex flex-col min-h-full h-fit">
+                    
+                    {calendarView === 'month' && (
+                      <>
+                        <div className="grid grid-cols-7 border-b border-slate-200/60 dark:border-slate-800/60 bg-slate-50/30 dark:bg-black/20 shrink-0">
+                          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, i) => {
+                            const showDay = calWeekStartsOn === 'Monday' ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i] : day;
+                            const isWeekend = showDay === 'Sun' || showDay === 'Sat';
+                            return (
+                              <div key={showDay} className={cn(
+                                "py-3 text-center text-xs font-bold uppercase tracking-wider border-r border-slate-200/60 dark:border-slate-800/60 last:border-0",
+                                isWeekend ? "text-slate-400 dark:text-slate-500" : "text-slate-500 dark:text-slate-400"
+                              )}>
+                                {showDay}
+                              </div>
+                            );
+                          })}
                         </div>
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-7 grid-rows-5">
-                      {(() => {
-                        const startOfMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1);
-                        const startDay = startOfMonth.getDay();
-                        const daysInMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 0).getDate();
-                        const now = new Date();
-                        
-                        return Array.from({ length: 35 }).map((_, i) => {
-                          const dayNum = i - startDay + 1;
-                          const isToday = dayNum === now.getDate() && currentCalendarDate.getMonth() === now.getMonth() && currentCalendarDate.getFullYear() === now.getFullYear();
-                          const isCurrentMonth = dayNum > 0 && dayNum <= daysInMonth;
-                          
-                          // Find events for this day
-                          const dayEvents = filteredEvents.filter(e => {
+                        <div className="flex-1 grid grid-cols-7 bg-slate-200/40 dark:bg-slate-800/40 gap-px border-b border-transparent" style={{ gridTemplateRows: `repeat(${Math.ceil((new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1).getDay() + (calWeekStartsOn === 'Monday' && new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1).getDay() === 0 ? 6 : calWeekStartsOn === 'Monday' ? -1 : 0) + new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 0).getDate()) / 7)}, minmax(0, 1fr))` }}>
+                          {(() => {
+                            const startOfMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1);
+                            let startDay = startOfMonth.getDay();
+                            if (calWeekStartsOn === 'Monday') {
+                              startDay = startDay === 0 ? 6 : startDay - 1;
+                            }
+                            const daysInMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 0).getDate();
+                            const totalDays = startDay + daysInMonth;
+                            const numRows = Math.ceil(totalDays / 7);
+                            const now = new Date();
+                            
+                            return Array.from({ length: numRows * 7 }).map((_, i) => {
+                              const dayNum = i - startDay + 1;
+                              const isToday = dayNum === now.getDate() && currentCalendarDate.getMonth() === now.getMonth() && currentCalendarDate.getFullYear() === now.getFullYear();
+                              const isCurrentMonth = dayNum > 0 && dayNum <= daysInMonth;
+                              
+                              const dayEvents = filteredEvents.filter(e => {
+                                const eventDate = new Date(e.start || e.startDate);
+                                return eventDate.getDate() === dayNum && eventDate.getMonth() === currentCalendarDate.getMonth() && eventDate.getFullYear() === currentCalendarDate.getFullYear();
+                              });
+
+                              return (
+                                <div 
+                                  key={i} 
+                                  onClick={() => {
+                                    if (isCurrentMonth) {
+                                      setSelectedCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), dayNum));
+                                    }
+                                  }}
+                                  onDoubleClick={() => {
+                                    if (isCurrentMonth) {
+                                      setNewEvent({ ...newEvent, startDate: format(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), dayNum), 'yyyy-MM-dd'), endDate: format(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), dayNum), 'yyyy-MM-dd') });
+                                      setIsEventModalOpen(true);
+                                    }
+                                  }}
+                                  className={cn(
+                                    "min-h-[120px] p-2 bg-white dark:bg-[#0d0e15] hover:bg-slate-50 dark:hover:bg-[#151722] transition-colors cursor-pointer group flex flex-col",
+                                    !isCurrentMonth && "bg-slate-50/50 dark:bg-[#0a0a0f]"
+                                  )}
+                                >
+                                  <div className="flex justify-between items-start mb-1">
+                                    <span className={cn(
+                                      "text-[13px] font-semibold w-7 h-7 flex items-center justify-center rounded-full transition-all",
+                                      isToday ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20" : "text-slate-700 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400",
+                                      !isCurrentMonth && "font-normal opacity-30 text-slate-400"
+                                    )}>
+                                      {isCurrentMonth ? dayNum : ""}
+                                    </span>
+                                  </div>
+                                  
+                                  <div className="flex-1 space-y-1 overflow-y-auto no-scrollbar">
+                                    {dayEvents.slice(0, 2).map((event, idx) => (
+                                      <div 
+                                        key={idx} 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedEvent(event);
+                                        }}
+                                        className="px-2 py-1 bg-indigo-50/80 dark:bg-indigo-500/10 border-l-[3px] border-indigo-500 rounded-r text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 truncate transition-all hover:bg-indigo-100 dark:hover:bg-indigo-500/20 shadow-sm"
+                                        title={calEventHoverPreview === 'None' ? undefined : event.title}
+                                      >
+                                        {calShowTimeInMonth && !event.isAllDay && format(new Date(event.start || event.startDate), calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')} {event.title}
+                                      </div>
+                                    ))}
+                                    {dayEvents.length > 2 && (
+                                      <div className="px-2 py-0.5 text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                                        +{dayEvents.length - 2} more
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </>
+                    )}
+
+                    {calendarView === 'week' && (
+                      <div className="flex flex-col flex-1 h-full min-h-0">
+                        <div className="grid grid-cols-8 border-b border-slate-200/60 dark:border-slate-800/60 bg-slate-50/30 dark:bg-black/20 shrink-0">
+                          <div className="border-r border-slate-200/60 dark:border-slate-800/60 p-2 flex items-center justify-center">
+                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Time</span>
+                          </div>
+                          {Array.from({ length: 7 }).map((_, i) => {
+                            const date = new Date(currentCalendarDate);
+                            const startOfWeek = date.getDate() - date.getDay();
+                            date.setDate(startOfWeek + i);
+                            const isToday = date.getDate() === new Date().getDate() && date.getMonth() === new Date().getMonth() && date.getFullYear() === new Date().getFullYear();
+                            
+                            return (
+                              <div key={i} className="py-2 flex flex-col items-center justify-center border-r border-slate-200/60 dark:border-slate-800/60 last:border-0">
+                                <span className={cn("text-xs font-bold uppercase tracking-wider mb-1", isToday ? "text-indigo-600 dark:text-indigo-400" : "text-slate-500")}>
+                                  {format(date, 'eee')}
+                                </span>
+                                <span className={cn("text-lg font-bold w-8 h-8 flex items-center justify-center rounded-full", isToday ? "bg-indigo-600 text-white" : "text-slate-800 dark:text-white")}>
+                                  {date.getDate()}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="flex-1 flex flex-col min-h-0">
+                          {(() => {
+                            // Extract all day events for the current week
+                            const allDayWeekEvents = Array.from({ length: 7 }).map((_, dayIndex) => {
+                              const date = new Date(currentCalendarDate);
+                              const startOfWeek = date.getDate() - date.getDay();
+                              date.setDate(startOfWeek + dayIndex);
+                              
+                              return filteredEvents.filter(e => {
+                                const eventDate = new Date(e.start || e.startDate);
+                                return e.showWithoutTime && eventDate.getDate() === date.getDate() && eventDate.getMonth() === date.getMonth() && eventDate.getFullYear() === date.getFullYear();
+                              });
+                            });
+                            
+                            const hasAnyAllDayEvents = allDayWeekEvents.some(events => events.length > 0);
+
+                            return (
+                              <>
+                                {hasAnyAllDayEvents && (
+                                  <div className="flex border-b border-slate-200/60 dark:border-slate-800/60 bg-white dark:bg-[#0d0e15] shrink-0 min-h-0">
+                                    <div className="w-1/8 flex flex-col justify-center items-center border-r border-slate-200/60 dark:border-slate-800/60 shrink-0 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider py-2" style={{ width: '12.5%' }}>
+                                      All day
+                                    </div>
+                                    <div className="w-7/8 flex relative" style={{ width: '87.5%' }}>
+                                      {Array.from({ length: 7 }).map((_, dayIndex) => (
+                                        <div key={dayIndex} className="flex-1 border-r border-slate-200/60 dark:border-slate-800/60 last:border-0 relative p-1 overflow-y-auto max-h-[100px] custom-scrollbar flex flex-col gap-1">
+                                          {allDayWeekEvents[dayIndex].map((event, idx) => (
+                                            <div 
+                                              key={idx}
+                                              onClick={() => setSelectedEvent(event)}
+                                              className="p-1 px-1.5 bg-indigo-100 dark:bg-indigo-500/20 border-l-[3px] border-indigo-500 rounded text-[10px] font-bold text-indigo-900 dark:text-indigo-100 cursor-pointer truncate transition-all hover:bg-indigo-200 dark:hover:bg-indigo-500/30"
+                                            >
+                                              {event.title}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                <div className="flex-1 overflow-y-auto custom-scrollbar relative pr-1 pb-16">
+                                  <div className="flex relative" style={{ height: '1536px' }}>
+                                    <div className="w-1/8 flex flex-col border-r border-slate-200/60 dark:border-slate-800/60 shrink-0 bg-white/50 dark:bg-black/50 z-10" style={{ width: '12.5%' }}>
+                                      {Array.from({ length: 24 }).map((_, i) => (
+                                        <div key={i} className="h-16 border-b border-transparent flex items-start justify-center pr-2 py-1">
+                                          <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider">{calTimeFormat === '24-hour' ? `${i.toString().padStart(2, '0')}:00` : (i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                    <div className="w-7/8 flex relative" style={{ width: '87.5%' }}>
+                                      {Array.from({ length: 24 }).map((_, h) => (
+                                        <div key={h} className="absolute left-0 right-0 border-b border-slate-100 dark:border-slate-800/40 pointer-events-none" style={{ top: `${h * 64}px`, height: '64px' }}></div>
+                                      ))}
+                                      
+                                      {(() => {
+                                        const now = new Date();
+                                        const isCurrentWeek = Array.from({ length: 7 }).some((_, dayIndex) => {
+                                          const date = new Date(currentCalendarDate);
+                                          const startOfWeek = date.getDate() - date.getDay();
+                                          date.setDate(startOfWeek + dayIndex);
+                                          return date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+                                        });
+                                        
+                                        if (!isCurrentWeek) return null;
+                                        const top = now.getHours() * 64 + (now.getMinutes() / 60) * 64;
+                                        return (
+                                          <div className="absolute left-0 right-0 border-b-[2px] border-red-500/80 z-20 pointer-events-none shadow-[0_1px_4px_rgba(239,68,68,0.3)]" style={{ top: `${top}px` }}>
+                                            <div className="absolute -left-1.5 -top-[5px] w-2.5 h-2.5 rounded-full bg-red-500/80"></div>
+                                          </div>
+                                        );
+                                      })()}
+        
+                                      {Array.from({ length: 7 }).map((_, dayIndex) => {
+                                        const date = new Date(currentCalendarDate);
+                                        const startOfWeek = date.getDate() - date.getDay();
+                                        date.setDate(startOfWeek + dayIndex);
+                                        
+                                        const dayEvents = filteredEvents.filter(e => {
+                                          const eventDate = new Date(e.start || e.startDate);
+                                          return !e.showWithoutTime && eventDate.getDate() === date.getDate() && eventDate.getMonth() === date.getMonth() && eventDate.getFullYear() === date.getFullYear();
+                                        }).sort((a, b) => new Date(a.start || a.startDate).getTime() - new Date(b.start || b.startDate).getTime());
+                                        
+                                        // Simple overlap layout
+                                        const columns: any[][] = [];
+                                        const layouts = dayEvents.map(event => {
+                                          const start = new Date(event.start || event.startDate).getTime();
+                                          const end = event.endDate ? new Date(event.endDate).getTime() : start + 60 * 60 * 1000;
+                                          let colIdx = 0;
+                                          for (let i = 0; i < columns.length; i++) {
+                                            const lastEvent = columns[i][columns[i].length - 1];
+                                            const lastEnd = lastEvent.endDate ? new Date(lastEvent.endDate).getTime() : new Date(lastEvent.start || lastEvent.startDate).getTime() + 60 * 60 * 1000;
+                                            if (start >= lastEnd) {
+                                              columns[i].push(event);
+                                              colIdx = i;
+                                              break;
+                                            }
+                                            if (i === columns.length - 1) {
+                                              columns.push([event]);
+                                              colIdx = columns.length - 1;
+                                              break;
+                                            }
+                                          }
+                                          if (columns.length === 0) {
+                                            columns.push([event]);
+                                          }
+                                          return { event, colIdx };
+                                        });
+
+                                        return (
+                                          <div 
+                                            key={dayIndex} 
+                                            className="flex-1 relative border-r border-slate-100 dark:border-slate-800/40 last:border-0 h-[1536px] cursor-text"
+                                            onDoubleClick={(e) => {
+                                               const rect = e.currentTarget.getBoundingClientRect();
+                                               const y = e.clientY - rect.top;
+                                               const hour = Math.floor(y / 64);
+                                               const clickDate = new Date(date);
+                                               clickDate.setHours(hour, 0, 0, 0);
+                                               setNewEvent({ ...newEvent, startDate: format(clickDate, 'yyyy-MM-dd'), startTime: format(clickDate, 'HH:mm'), endDate: format(clickDate, 'yyyy-MM-dd'), endTime: format(new Date(clickDate.getTime() + 3600000), 'HH:mm') });
+                                               setIsEventModalOpen(true);
+                                            }}
+                                          >
+                                            {layouts.map(({ event, colIdx }, idx) => {
+                                              const eventDate = new Date(event.start || event.startDate);
+                                              const startTokens = event.startTime ? event.startTime.split(':') : [];
+                                              const endTokens = event.endTime ? event.endTime.split(':') : [];
+                                              
+                                              const startHours = startTokens.length ? parseInt(startTokens[0]) : eventDate.getHours();
+                                              const startMins = startTokens.length ? parseInt(startTokens[1]) : eventDate.getMinutes();
+                                              const top = startHours * 64 + (startMins / 60) * 64;
+                                              
+                                              let height = 48; // default approx 45 mins
+                                              if (event.startDate && event.endDate && event.startTime && event.endTime && event.startDate === event.endDate) {
+                                                const endHours = parseInt(endTokens[0] || '0');
+                                                const endMins = parseInt(endTokens[1] || '0');
+                                                const diffMins = (endHours * 60 + endMins) - (startHours * 60 + startMins);
+                                                if (diffMins > 0) height = (diffMins / 60) * 64;
+                                              }
+                                              
+                                              const widthPct = columns.length > 0 ? 100 / columns.length : 100;
+                                              const leftPct = widthPct * colIdx;
+                                              
+                                              return (
+                                                <div 
+                                                  key={idx}
+                                                  onClick={() => setSelectedEvent(event)}
+                                                  className="absolute p-1.5 bg-indigo-100 dark:bg-indigo-500/20 border-l-[3px] border-indigo-500 rounded text-xs font-semibold text-indigo-800 dark:text-indigo-200 cursor-pointer overflow-hidden shadow-sm hover:shadow-md transition-all z-10"
+                                                  style={{ 
+                                                    top: `${top}px`, 
+                                                    height: `${height}px`,
+                                                    left: `calc(${leftPct}% + 1px)`,
+                                                    width: `calc(${widthPct}% - 2px)`
+                                                  }}
+                                                >
+                                                  <div className="truncate">{event.title}</div>
+                                                  <div className="text-[10px] opacity-80 mt-0.5 font-normal truncate">
+                                                    {format(eventDate, calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')}
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
+
+                    {calendarView === 'day' && (
+                      <div className="flex flex-col flex-1 h-full min-h-0">
+                        <div className="border-b border-slate-200/60 dark:border-slate-800/60 bg-slate-50/30 dark:bg-black/20 p-4 shrink-0 flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-100 dark:border-indigo-500/20 flex flex-col items-center justify-center text-indigo-600 dark:text-indigo-400">
+                              <span className="text-[10px] md:text-xs font-bold uppercase">{format(currentCalendarDate, 'MMM')}</span>
+                              <span className="text-xl md:text-2xl font-bold leading-none">{format(currentCalendarDate, 'd')}</span>
+                            </div>
+                            <div>
+                              <h2 className="text-lg md:text-xl font-bold text-slate-900 dark:text-white">{format(currentCalendarDate, 'EEEE')}</h2>
+                              <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400">{format(currentCalendarDate, 'MMMM d, yyyy')}</p>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex-1 flex flex-col min-h-0">
+                          {(() => {
+                            const dayEvents = filteredEvents.filter(e => {
+                              const eventDate = new Date(e.start || e.startDate);
+                              return eventDate.getDate() === currentCalendarDate.getDate() && eventDate.getMonth() === currentCalendarDate.getMonth() && eventDate.getFullYear() === currentCalendarDate.getFullYear();
+                            });
+                            
+                            const allDayEvents = dayEvents.filter(e => e.showWithoutTime);
+                            const timedEvents = dayEvents.filter(e => !e.showWithoutTime);
+                            
+                            return (
+                              <>
+                                {allDayEvents.length > 0 && (
+                                  <div className="flex border-b border-slate-200/60 dark:border-slate-800/60 bg-white dark:bg-[#0d0e15] shrink-0 min-h-0">
+                                    <div className="w-16 md:w-20 pt-2 shrink-0 border-r border-slate-200/60 dark:border-slate-800/60 text-[10px] md:text-xs text-center font-bold text-slate-400 uppercase">
+                                      All day
+                                    </div>
+                                    <div className="flex-1 p-2 flex flex-col gap-1 overflow-y-auto max-h-[140px] custom-scrollbar">
+                                      {allDayEvents.map((event, idx) => (
+                                        <div 
+                                          key={idx}
+                                          onClick={() => setSelectedEvent(event)}
+                                          className="p-2 bg-indigo-100 dark:bg-indigo-500/20 border-l-[4px] border-indigo-500 rounded-lg shadow-sm cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-500/30 transition-all text-sm font-bold text-indigo-900 dark:text-indigo-100"
+                                        >
+                                          {event.title}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                
+                                <div className="flex-1 overflow-y-auto custom-scrollbar relative pr-1 pb-16">
+                                  <div className="flex relative" style={{ height: '1536px' }}>
+                                    <div className="w-16 md:w-20 flex flex-col border-r border-slate-200/60 dark:border-slate-800/60 shrink-0 bg-white/50 dark:bg-black/50 z-10">
+                                      {Array.from({ length: 24 }).map((_, i) => (
+                                        <div key={i} className="h-16 flex items-start justify-end pr-2 md:pr-3 py-1.5">
+                                          <span className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-wider">{calTimeFormat === '24-hour' ? `${i.toString().padStart(2, '0')}:00` : (i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                    <div 
+                                      className="flex-1 relative bg-slate-50/10 dark:bg-black/10 cursor-text"
+                                      onDoubleClick={(e) => {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const y = e.clientY - rect.top;
+                                        const hour = Math.floor(y / 64);
+                                        const clickDate = new Date(currentCalendarDate);
+                                        clickDate.setHours(hour, 0, 0, 0);
+                                        setNewEvent({ ...newEvent, startDate: format(clickDate, 'yyyy-MM-dd'), startTime: format(clickDate, 'HH:mm'), endDate: format(clickDate, 'yyyy-MM-dd'), endTime: format(new Date(clickDate.getTime() + 3600000), 'HH:mm') });
+                                        setIsEventModalOpen(true);
+                                      }}
+                                    >
+                                      {Array.from({ length: 24 }).map((_, h) => (
+                                        <div key={h} className="absolute left-0 right-0 border-b border-slate-200/40 dark:border-slate-800/40 pointer-events-none" style={{ top: `${h * 64}px`, height: '64px' }}></div>
+                                      ))}
+                                      
+                                      {(() => {
+                                        const now = new Date();
+                                        const isToday = currentCalendarDate.getDate() === now.getDate() && currentCalendarDate.getMonth() === now.getMonth() && currentCalendarDate.getFullYear() === now.getFullYear();
+                                        
+                                        if (!isToday) return null;
+                                        const top = now.getHours() * 64 + (now.getMinutes() / 60) * 64;
+                                        return (
+                                          <div className="absolute left-0 right-0 border-b-[2.5px] border-red-500/90 z-20 pointer-events-none shadow-[0_1px_4px_rgba(239,68,68,0.2)]" style={{ top: `${top}px` }}>
+                                            <div className="absolute left-0 -top-1.5 w-3 h-3 rounded-full bg-red-500/90 shadow-[0_0_8px_rgba(239,68,68,0.4)]"></div>
+                                          </div>
+                                        );
+                                      })()}
+        
+                                      {(() => {
+                                        const sortedTimedEvents = [...timedEvents].sort((a, b) => new Date(a.start || a.startDate).getTime() - new Date(b.start || b.startDate).getTime());
+                                        const columns: any[][] = [];
+                                        const layouts = sortedTimedEvents.map(event => {
+                                          const start = new Date(event.start || event.startDate).getTime();
+                                          const end = event.endDate ? new Date(event.endDate).getTime() : start + 60 * 60 * 1000;
+                                          let colIdx = 0;
+                                          for (let i = 0; i < columns.length; i++) {
+                                            const lastEvent = columns[i][columns[i].length - 1];
+                                            const lastEnd = lastEvent.endDate ? new Date(lastEvent.endDate).getTime() : new Date(lastEvent.start || lastEvent.startDate).getTime() + 60 * 60 * 1000;
+                                            if (start >= lastEnd) {
+                                              columns[i].push(event);
+                                              colIdx = i;
+                                              break;
+                                            }
+                                            if (i === columns.length - 1) {
+                                              columns.push([event]);
+                                              colIdx = columns.length - 1;
+                                              break;
+                                            }
+                                          }
+                                          if (columns.length === 0) {
+                                            columns.push([event]);
+                                          }
+                                          return { event, colIdx };
+                                        });
+
+                                        return layouts.map(({ event, colIdx }, idx) => {
+                                          const eventDate = new Date(event.start || event.startDate);
+                                          const startTokens = event.startTime ? event.startTime.split(':') : [];
+                                          const endTokens = event.endTime ? event.endTime.split(':') : [];
+                                          
+                                          const startHours = startTokens.length ? parseInt(startTokens[0]) : eventDate.getHours();
+                                          const startMins = startTokens.length ? parseInt(startTokens[1]) : eventDate.getMinutes();
+                                          const top = startHours * 64 + (startMins / 60) * 64;
+                                          
+                                          let height = 60; // Default approx 1 hour
+                                          if (event.startDate && event.endDate && event.startTime && event.endTime && event.startDate === event.endDate) {
+                                            const endHours = parseInt(endTokens[0] || '0');
+                                            const endMins = parseInt(endTokens[1] || '0');
+                                            const diffMins = (endHours * 60 + endMins) - (startHours * 60 + startMins);
+                                            if (diffMins > 0) height = (diffMins / 60) * 64;
+                                          }
+                                          
+                                          const widthPct = columns.length > 0 ? 100 / columns.length : 100;
+                                          const leftPct = widthPct * colIdx;
+
+                                          return (
+                                            <div 
+                                              key={idx}
+                                              onClick={() => setSelectedEvent(event)}
+                                              className="absolute p-2.5 bg-indigo-100 dark:bg-indigo-500/20 border-l-[4px] border-indigo-500 rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-all z-10 hover:bg-indigo-200 dark:hover:bg-indigo-500/30"
+                                              style={{ 
+                                                top: `${top}px`, 
+                                                height: `${height}px`,
+                                                left: `calc(${leftPct}% + 8px)`,
+                                                width: `calc(${widthPct}% - 16px)`
+                                              }}
+                                            >
+                                              <div className="font-bold text-indigo-900 dark:text-indigo-100 leading-tight">{event.title}</div>
+                                              <div className="text-[11px] font-medium text-indigo-700 dark:text-indigo-300 mt-1 flex items-center gap-1">
+                                                <Clock className="w-3 h-3" />
+                                                {format(eventDate, calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')}
+                                              </div>
+                                            </div>
+                                          );
+                                        });
+                                      })()}
+                                    </div>
+                                  </div>
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
+
+                    {calendarView === 'agenda' && (
+                      <div className="flex-1 overflow-y-auto custom-scrollbar bg-white dark:bg-[#0d0e15] min-h-full rounded-b-3xl">
+                        {(() => {
+                          const startOfCurrent = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), currentCalendarDate.getDate()).getTime();
+
+                          const allUpcoming = [...filteredEvents].sort((a, b) => {
+                            return new Date(a.start || a.startDate).getTime() - new Date(b.start || b.startDate).getTime();
+                          }).filter(e => {
                             const eventDate = new Date(e.start || e.startDate);
-                            return eventDate.getDate() === dayNum && eventDate.getMonth() === currentCalendarDate.getMonth() && eventDate.getFullYear() === currentCalendarDate.getFullYear();
+                            const startOfEvent = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate()).getTime();
+                            return startOfEvent >= Math.min(startOfCurrent, new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime());
                           });
 
+                          const groupedAll = allUpcoming.reduce((acc: any, event) => {
+                            const date = new Date(event.start || event.startDate);
+                            const localDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+                            const key = format(localDate, 'yyyy-MM-dd');
+                            if (!acc[key]) acc[key] = [];
+                            acc[key].push(event);
+                            return acc;
+                          }, {});
+
+                          const todayKey = format(new Date(), 'yyyy-MM-dd');
+                          if (!groupedAll[todayKey]) groupedAll[todayKey] = [];
+
+                          const allDates = Object.keys(groupedAll).sort();
+
                           return (
-                            <div 
-                              key={i} 
-                              onClick={() => {
-                                if (isCurrentMonth) {
-                                  setSelectedCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), dayNum));
-                                }
-                              }}
-                              className={cn(
-                                "min-h-[120px] p-2 border-r border-b border-slate-100 dark:border-slate-800 transition-colors hover:bg-slate-50 dark:hover:bg-[#11131f] cursor-pointer group",
-                                !isCurrentMonth && "bg-slate-50/50 dark:bg-black"
-                              )}
-                            >
-                              <div className="flex justify-between items-start">
-                                <span className={cn(
-                                  "text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full transition-all",
-                                  isToday ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20" : "text-slate-600 dark:text-slate-400",
-                                  !isCurrentMonth && "opacity-30"
-                                )}>
-                                  {isCurrentMonth ? dayNum : ""}
-                                </span>
-                                {isToday && (
-                                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-                                )}
-                              </div>
-                              
-                              <div className="mt-2 space-y-1 text-left">
-                                {dayEvents.map((event, idx) => (
-                                  <div 
-                                    key={idx} 
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedEvent(event);
-                                    }}
-                                    className="p-1.5 bg-indigo-50 dark:bg-indigo-900/20 border-l-2 border-indigo-500 rounded text-[10px] font-bold text-indigo-700 dark:text-indigo-300 truncate transition-all hover:translate-x-1"
-                                  >
-                                    {event.title}
+                            <div className="flex flex-col flex-1 pb-16 min-h-full">
+                              {allDates.map((dateStr) => {
+                                const [year, month, day] = dateStr.split('-');
+                                const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+                                const isCurrentlySelectedMonth = date.getMonth() === currentCalendarDate.getMonth() && date.getFullYear() === currentCalendarDate.getFullYear();
+                                const isActuallyToday = dateStr === todayKey;
+                                const isActuallyTomorrow = dateStr === format(new Date(new Date().getTime() + 86400000), 'yyyy-MM-dd');
+                                const eventsForDay = groupedAll[dateStr];
+
+                                let dateHeaderStr = format(date, 'EEEE, MMMM d');
+                                if (isActuallyToday) dateHeaderStr = "Today";
+                                else if (isActuallyTomorrow) dateHeaderStr = "Tomorrow";
+
+                                // Scroll target ref could be added here if needed
+
+                                return (
+                                  <div key={dateStr} className="flex flex-col">
+                                    <div className="sticky top-0 bg-white/90 dark:bg-[#0d0e15]/90 backdrop-blur-sm px-4 py-[10px] border-b border-slate-200 dark:border-slate-800/60 z-10 flex items-baseline gap-2">
+                                      <span className={cn(
+                                        "text-[14px] font-semibold",
+                                        isActuallyToday ? "text-indigo-600 dark:text-indigo-400" : "text-slate-900 dark:text-white"
+                                      )}>
+                                        {dateHeaderStr}
+                                      </span>
+                                      <span className="text-[12px] text-slate-500 dark:text-slate-400">
+                                        {format(date, 'MMM d, yyyy')}
+                                      </span>
+                                    </div>
+                                    
+                                    {eventsForDay.length === 0 ? (
+                                      <div className="px-4 py-8 text-center text-[14px] text-slate-500">
+                                        No events.
+                                      </div>
+                                    ) : (
+                                      <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                                        {eventsForDay.map((event: any, eIdx: number) => {
+                                          const eventDate = new Date(event.start || event.startDate);
+                                          const cal = calendars.find((c: any) => c.id === (event.calendarId || (event.calendarIds && Object.keys(event.calendarIds)[0])) && c._accountId === event._accountId);
+                                          
+                                          let endStr = format(eventDate, calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a');
+                                          if (event.duration) {
+                                            const matchHours = String(event.duration).match(/(\d+)H/);
+                                            const matchMins = String(event.duration).match(/(\d+)M/);
+                                            let ms = 0;
+                                            if (matchHours) ms += parseInt(matchHours[1]) * 3600000;
+                                            if (matchMins) ms += parseInt(matchMins[1]) * 60000;
+                                            if (!matchHours && !matchMins) ms += 3600000;
+                                            endStr = format(new Date(eventDate.getTime() + ms), calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a');
+                                          }
+                                          
+                                          const isPast = eventDate.getTime() < new Date().getTime() && !event.isAllDay && !event.showWithoutTime;
+
+                                          return (
+                                            <button 
+                                              key={eIdx}
+                                              onClick={() => setSelectedEvent(event)}
+                                              className={cn(
+                                                "w-full flex items-start px-4 py-[14px] sm:py-[18px] hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors text-left",
+                                                isPast && "opacity-60"
+                                              )}
+                                              style={{ gap: '16px' }}
+                                            >
+                                              <div className="flex flex-col items-center pt-[3px] min-w-[64px] shrink-0">
+                                                {event.showWithoutTime || event.isAllDay ? (
+                                                  <span className="text-[12px] font-semibold text-slate-500 dark:text-slate-400">
+                                                    All day
+                                                  </span>
+                                                ) : (
+                                                  <>
+                                                    <span className="text-[14px] font-semibold text-slate-900 dark:text-slate-200 leading-tight">
+                                                      {format(eventDate, calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')}
+                                                    </span>
+                                                    <span className="text-[12px] text-slate-500 mt-[1px]">
+                                                      {endStr}
+                                                    </span>
+                                                  </>
+                                                )}
+                                              </div>
+                                              
+                                              <div 
+                                                className="w-[4px] self-stretch rounded-full shrink-0" 
+                                                style={{ backgroundColor: cal?.color || '#3b82f6' }}
+                                              ></div>
+                                              
+                                              <div className="flex-1 min-w-0 flex flex-col pt-[1px]">
+                                                <div className="text-[14px] sm:text-[15px] font-semibold text-slate-900 dark:text-white truncate">
+                                                  {event.title || "No title"}
+                                                </div>
+                                                {(event.locations ? Object.values(event.locations as any)[0] as any : null)?.name && (
+                                                  <div className="flex items-center gap-1.5 text-[13px] text-slate-500 dark:text-slate-400 mt-[3px]">
+                                                    <MapPin className="w-3.5 h-3.5 shrink-0" />
+                                                    <span className="truncate">{(Object.values(event.locations as any)[0] as any).name}</span>
+                                                  </div>
+                                                )}
+                                                {event.participants && Object.keys(event.participants).length > 0 && (
+                                                  <div className="flex items-center gap-1.5 text-[13px] text-slate-500 dark:text-slate-400 mt-[3px]">
+                                                    <Users className="w-3.5 h-3.5 shrink-0" />
+                                                    <span>{Object.keys(event.participants).length}</span>
+                                                  </div>
+                                                )}
+                                                {cal && (
+                                                  <div className="flex items-center gap-1.5 text-[13px] text-slate-500 dark:text-slate-400 mt-[3px]">
+                                                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cal.color || '#3b82f6' }} />
+                                                    <span className="truncate">{cal.name}</span>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
                                   </div>
-                                ))}
-                              </div>
+                                );
+                              })}
                             </div>
                           );
-                        });
-                      })()}
-                    </div>
-                  </div>
+                        })()}
+                      </div>
+                    )}
 
-                  <div className="mt-8">
-                    <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Your Calendars</h2>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {(calendars || []).map((calendar, idx) => (
-                        <div key={idx} className="bg-white dark:bg-[#11131f] p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between group hover:border-indigo-500/30 transition-all">
-                          <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-[#050505] text-indigo-700 dark:text-indigo-400 flex items-center justify-center shrink-0">
-                              <Calendar className="w-5 h-5" />
+                    {calendarView === 'tasks' as any && (
+                      <div className="flex-1 overflow-y-auto custom-scrollbar p-6 bg-slate-50/50 dark:bg-black/50">
+                        <div className="max-w-3xl mx-auto">
+                          <div className="flex items-center justify-between mb-8">
+                            <div>
+                              <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">My Tasks</h2>
+                              <p className="text-slate-500 dark:text-slate-400 mt-1">Manage your upcoming to-dos.</p>
                             </div>
-                            <h3 className="font-semibold text-slate-900 dark:text-white">{calendar.name || "Calendar"}</h3>
+                            <button className="px-4 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition flex items-center gap-2">
+                              <Plus className="w-4 h-4" /> Add Task
+                            </button>
                           </div>
-                          <div className="w-3 h-3 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+                          
+                          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-slate-500 dark:text-slate-400 flex flex-col items-center">
+                             <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                               <Check className="w-8 h-8 text-slate-400" />
+                             </div>
+                             <p className="text-base font-semibold">You have no tasks.</p>
+                             <p className="text-sm mt-1">Add tasks here to keep track of your work.</p>
+                          </div>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -4313,7 +5546,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     { id: 'notifications', icon: Bell },
                     { id: 'vacation', icon: Reply },
                     { id: 'templates', icon: File },
+                    { id: 'tags', icon: Tag },
                     { id: 'contacts', icon: Users },
+                    { id: 'calendar', icon: Calendar },
                     { id: 'folders', icon: Folder },
                     { id: 'filters', icon: Filter },
                     { id: 'security', icon: Shield },
@@ -4353,7 +5588,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                      isSettingsSection === 'vacation' ? t(language, 'vacation') : 
                      isSettingsSection === 'notifications' ? t(language, 'notifications') : 
                      isSettingsSection === 'templates' ? t(language, 'templates') : 
+                     isSettingsSection === 'tags' ? 'Tags' : 
                      isSettingsSection === 'contacts' ? t(language, 'contacts') : 
+                     isSettingsSection === 'calendar' ? 'Calendar' :
                      isSettingsSection === 'folders' ? t(language, 'folders') : 
                      isSettingsSection === 'filters' ? t(language, 'filters') : t(language, 'advanced')}
                   </h1>
@@ -4367,7 +5604,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                      isSettingsSection === 'vacation' ? t(language, 'vacation') : 
                      isSettingsSection === 'notifications' ? t(language, 'notifications') : 
                      isSettingsSection === 'templates' ? t(language, 'templates') : 
+                     isSettingsSection === 'tags' ? 'Tags' : 
                      isSettingsSection === 'contacts' ? t(language, 'contacts') : 
+                     isSettingsSection === 'calendar' ? 'Calendar' :
                      isSettingsSection === 'folders' ? t(language, 'folders') : 
                      isSettingsSection === 'filters' ? t(language, 'filters') : t(language, 'advanced')}
                     <ChevronDown className="w-4 h-4" />
@@ -4392,7 +5631,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           { id: 'notifications', icon: Bell },
                           { id: 'vacation', icon: Reply },
                           { id: 'templates', icon: File },
+                          { id: 'tags', icon: Tag },
                           { id: 'contacts', icon: Users },
+                          { id: 'calendar', icon: Calendar },
                           { id: 'folders', icon: Folder },
                           { id: 'filters', icon: Filter },
                           { id: 'security', icon: Shield },
@@ -4607,23 +5848,60 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
                   {isSettingsSection === 'notifications' && (
                     <div className="grid gap-6">
-                      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                        <div className="flex items-center gap-3 mb-6">
-                          <div className="p-2 bg-rose-100 dark:bg-rose-500/10 rounded-xl">
-                            <Bell className="w-5 h-5 text-rose-600 dark:text-rose-400" />
-                          </div>
-                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Notifications</h2>
+                      {/* Notification Sound */}
+                      <div className="bg-white dark:bg-[#0b0c10] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex flex-col gap-1 mb-6">
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Notification Sound</h2>
+                          <div className="text-sm text-slate-500 dark:text-slate-400">Choose which sound to play for notifications</div>
                         </div>
 
-                        <div className="space-y-8">
+                        <div className="flex flex-row items-center justify-between gap-4">
+                          <div className="font-medium text-slate-900 dark:text-white text-[15px]">Sound</div>
+                          <div className="flex items-center gap-2">
+                            <select 
+                              value={notificationTone}
+                              onChange={(e) => {
+                                setNotificationTone(e.target.value);
+                                localStorage.setItem('webmail_notification_tone', e.target.value);
+                              }}
+                              className="bg-slate-50 dark:bg-[#14151a] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-sm rounded-xl focus:ring-indigo-500 focus:border-indigo-500 block p-2.5 outline-none font-medium"
+                            >
+                              <option value="relax">Relax</option>
+                              <option value="chime">Chime</option>
+                              <option value="ding">Ding</option>
+                            </select>
+                            <button 
+                              onClick={() => {
+                                const audio = getNotificationAudio();
+                                audio.volume = 0.8;
+                                audio.play().catch(e => console.log("Audio play blocked", e));
+                              }}
+                              className="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#14151a]"
+                              title="Play sound"
+                            >
+                              <Bell className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-2">Select a notification tone and click the speaker icon to preview it</div>
+                      </div>
+
+                      {/* Email Notifications */}
+                      <div className="bg-white dark:bg-[#0b0c10] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex flex-col gap-1 mb-6">
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Email Notifications</h2>
+                          <div className="text-sm text-slate-500 dark:text-slate-400">Configure notifications for incoming emails</div>
+                        </div>
+
+                        <div className="space-y-6">
                           <div className="flex flex-row items-center justify-between gap-4">
                             <div className="flex-1 min-w-0 pr-4">
-                              <div className="font-bold text-slate-900 dark:text-white text-lg">Desktop Notifications</div>
-                              <div className="text-sm text-slate-500 dark:text-slate-400">Show notifications for new emails</div>
+                              <div className="font-medium text-slate-900 dark:text-white text-[15px]">Email notifications</div>
+                              <div className="text-sm text-slate-500 dark:text-slate-400">Show notifications when new emails arrive</div>
                             </div>
                             <button 
                               onClick={async () => {
-                                const newValue = !notificationsEnabled;
+                                const newValue = !emailNotificationsEnabled;
                                 if (newValue) {
                                   if (!("Notification" in window)) {
                                     toast.error("This browser does not support desktop notifications.");
@@ -4633,8 +5911,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                   try {
                                     const perm = await Notification.requestPermission();
                                     if (perm === 'granted') {
-                                      setNotificationsEnabled(true);
-                                      localStorage.setItem('webmail_notifications', 'true');
+                                      setEmailNotificationsEnabled(true);
+                                      localStorage.setItem('webmail_email_notifications', 'true');
                                       toast.success("Notifications enabled!");
                                     } else {
                                       const isIframe = window.self !== window.top;
@@ -4648,47 +5926,131 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                     toast.error("Could not request notification permission.");
                                   }
                                 } else {
-                                  setNotificationsEnabled(false);
-                                  localStorage.setItem('webmail_notifications', 'false');
+                                  setEmailNotificationsEnabled(false);
+                                  localStorage.setItem('webmail_email_notifications', 'false');
                                 }
                               }}
                               className={cn(
-                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all ring-offset-2 focus:ring-2 focus:ring-indigo-500 shrink-0",
-                                notificationsEnabled ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-800"
+                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
+                                emailNotificationsEnabled ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
                               )}
                             >
-                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", notificationsEnabled ? "translate-x-7" : "translate-x-1")} />
+                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", emailNotificationsEnabled ? "translate-x-6" : "translate-x-0")}></div>
                             </button>
                           </div>
 
                           <div className="flex flex-row items-center justify-between gap-4">
                             <div className="flex-1 min-w-0 pr-4">
-                              <div className="font-bold text-slate-900 dark:text-white text-lg">Sound Effects</div>
-                              <div className="text-sm text-slate-500 dark:text-slate-400">Play sound when a new message arrives</div>
+                              <div className="font-medium text-slate-900 dark:text-white text-[15px]">Notification sound</div>
+                              <div className="text-sm text-slate-500 dark:text-slate-400">Play an audio alert when new emails arrive</div>
                             </div>
                             <button 
                               onClick={() => {
-                                const newValue = !soundEffectsEnabled;
-                                setSoundEffectsEnabled(newValue);
-                                localStorage.setItem('webmail_sound_effects', newValue.toString());
+                                const newValue = !emailSoundEnabled;
+                                setEmailSoundEnabled(newValue);
+                                localStorage.setItem('webmail_email_sound', newValue.toString());
                               }}
                               className={cn(
-                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all ring-offset-2 focus:ring-2 focus:ring-indigo-500 shrink-0",
-                                soundEffectsEnabled ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-800"
+                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
+                                emailSoundEnabled ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
                               )}
                             >
-                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", soundEffectsEnabled ? "translate-x-7" : "translate-x-1")} />
+                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", emailSoundEnabled ? "translate-x-6" : "translate-x-0")}></div>
                             </button>
                           </div>
                         </div>
                       </div>
 
-                      <button 
-                        onClick={onLogout}
-                        className="w-full py-4 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-red-100 dark:hover:bg-red-500/20 transition-all border border-red-100 dark:border-red-900/30"
-                      >
-                        <LogOut className="w-5 h-5" /> Sign Out
-                      </button>
+                      {/* Calendar Notifications */}
+                      <div className="bg-white dark:bg-[#0b0c10] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex flex-col gap-1 mb-6">
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Calendar Notifications</h2>
+                          <div className="text-sm text-slate-500 dark:text-slate-400">Configure notifications for calendar events</div>
+                        </div>
+
+                        <div className="space-y-6">
+                          <div className="flex flex-row items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-medium text-slate-900 dark:text-white text-[15px]">Event notifications</div>
+                              <div className="text-sm text-slate-500 dark:text-slate-400">Show alerts for upcoming calendar events</div>
+                            </div>
+                            <button 
+                              onClick={async () => {
+                                const newValue = !calendarNotificationsEnabled;
+                                if (newValue) {
+                                  if (!("Notification" in window)) {
+                                    toast.error("This browser does not support desktop notifications.");
+                                    return;
+                                  }
+                                  
+                                  try {
+                                    const perm = await Notification.requestPermission();
+                                    if (perm === 'granted') {
+                                      setCalendarNotificationsEnabled(true);
+                                      localStorage.setItem('webmail_calendar_notifications', 'true');
+                                      toast.success("Calendar notifications enabled!");
+                                    } else {
+                                      toast.error("Notification permission denied.");
+                                    }
+                                  } catch (err) {
+                                    toast.error("Could not request notification permission.");
+                                  }
+                                } else {
+                                  setCalendarNotificationsEnabled(false);
+                                  localStorage.setItem('webmail_calendar_notifications', 'false');
+                                }
+                              }}
+                              className={cn(
+                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
+                                calendarNotificationsEnabled ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", calendarNotificationsEnabled ? "translate-x-6" : "translate-x-0")}></div>
+                            </button>
+                          </div>
+
+                          <div className="flex flex-row items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-medium text-slate-900 dark:text-white text-[15px]">Notification sound</div>
+                              <div className="text-sm text-slate-500 dark:text-slate-400">Play an audio alert for calendar reminders</div>
+                            </div>
+                            <button 
+                              onClick={() => {
+                                const newValue = !calendarSoundEnabled;
+                                setCalendarSoundEnabled(newValue);
+                                localStorage.setItem('webmail_calendar_sound', newValue.toString());
+                              }}
+                              className={cn(
+                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
+                                calendarSoundEnabled ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", calendarSoundEnabled ? "translate-x-6" : "translate-x-0")}></div>
+                            </button>
+                          </div>
+
+                          <div className="flex flex-row items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-medium text-slate-900 dark:text-white text-[15px]">Parse email invitations</div>
+                              <div className="text-sm text-slate-500 dark:text-slate-400">Detect calendar invitations in email attachments and show calendar actions</div>
+                            </div>
+                            <button 
+                              onClick={() => {
+                                const newValue = !parseEmailInvitations;
+                                setParseEmailInvitations(newValue);
+                                localStorage.setItem('webmail_parse_invitations', newValue.toString());
+                              }}
+                              className={cn(
+                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
+                                parseEmailInvitations ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", parseEmailInvitations ? "translate-x-6" : "translate-x-0")}></div>
+                            </button>
+                          </div>
+                        </div>
+
+                      </div>
                     </div>
                   )}
 
@@ -4876,30 +6238,438 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     </div>
                   )}
 
-                  {isSettingsSection === 'contacts' && (
-                    <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                      <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                        <Users className="w-5 h-5 text-indigo-500" /> Contact Management
+                  {isSettingsSection === 'tags' && (
+                    <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm max-w-2xl">
+                      <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">
+                        Email Tags
                       </h2>
-                      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
-                        Backup your contacts to a vCard file, or restore them from a vCard backup.
+                      <p className="text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+                        Define tags to organize your emails with colors. These are stored as JMAP keywords on the server.
                       </p>
+                      
+                      <div className="space-y-3 mb-8">
+                        {allTags.map((tag) => (
+                          <div key={tag.keyword} className="flex items-center p-4 bg-slate-50 dark:bg-black/40 rounded-xl border border-slate-200 dark:border-slate-800/60">
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center mr-4 shrink-0 ${tag.color} text-white font-bold text-[10px]`} style={{ backgroundColor: tag.color.startsWith('#') ? tag.color : undefined }}>
+                              {tag.name}
+                            </div>
+                            <div className="font-mono text-sm text-slate-600 dark:text-slate-300">
+                              {tag.keyword}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
                       <div className="flex gap-4">
                         <button 
-                          onClick={handleExportContacts}
-                          disabled={isLoading}
-                          className="flex-1 px-4 py-3 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
+                          onClick={() => setIsAddTagModalOpen(true)}
+                          className="px-5 py-2.5 bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-bold rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all flex items-center gap-2 border border-slate-200 dark:border-slate-700"
                         >
-                          <Download className="w-4 h-4" /> Export Contacts
+                          <Plus className="w-4 h-4" /> Add Tag
                         </button>
-                        <div className="flex-1 relative">
-                          <button 
-                            onClick={() => setIsImportModalOpen(true)}
-                            disabled={isLoading}
-                            className="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 transition-all flex items-center justify-center gap-2"
-                          >
-                            <Upload className="w-4 h-4" /> Import Contacts
-                          </button>
+                        <button 
+                          onClick={() => {
+                            if (window.confirm("Are you sure you want to remove all custom tags?")) {
+                              setCustomTags([]);
+                              localStorage.removeItem('webmail_custom_tags');
+                            }
+                          }}
+                          className="px-5 py-2.5 bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-bold rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all flex items-center gap-2 border border-slate-200 dark:border-slate-700"
+                        >
+                          <RefreshCw className="w-4 h-4" /> Clear Custom Tags
+                        </button>
+                      </div>
+
+                      {isAddTagModalOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center">
+                          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsAddTagModalOpen(false)} />
+                          <div className="relative bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl max-w-sm w-full mx-4 border border-slate-200 dark:border-slate-800">
+                            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Add Custom Tag</h3>
+                            
+                            <div className="space-y-4 mb-6">
+                              <div>
+                                <label className="text-sm font-bold text-slate-500 mb-1 block">Tag Name</label>
+                                <input
+                                  type="text"
+                                  value={newTagName}
+                                  onChange={(e) => setNewTagName(e.target.value)}
+                                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-none focus:ring-2 focus:ring-indigo-500/20 rounded-xl text-sm outline-none transition-all dark:text-white"
+                                  placeholder="e.g. Work, Urgent"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-sm font-bold text-slate-500 mb-1 block">Color</label>
+                                <div className="flex gap-2 items-center">
+                                  <input 
+                                    type="color"
+                                    value={newTagColor}
+                                    onChange={(e) => setNewTagColor(e.target.value)}
+                                    className="w-12 h-12 rounded-xl border-none cursor-pointer p-0 bg-transparent"
+                                  />
+                                  <span className="font-mono text-sm dark:text-white">{newTagColor}</span>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="flex gap-3">
+                              <button
+                                onClick={() => setIsAddTagModalOpen(false)}
+                                className="flex-1 px-4 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-xl transition-colors hover:bg-slate-200 dark:hover:bg-slate-700"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (!newTagName.trim()) return;
+                                  const keyword = `$label:${newTagName.trim().toLowerCase().replace(/\s+/g, '-')}`;
+                                  
+                                  const newTag = { keyword, name: newTagName.trim(), color: newTagColor };
+                                  const updated = [...customTags, newTag];
+                                  setCustomTags(updated);
+                                  localStorage.setItem('webmail_custom_tags', JSON.stringify(updated));
+                                  
+                                  setNewTagName('');
+                                  setIsAddTagModalOpen(false);
+                                }}
+                                disabled={!newTagName.trim()}
+                                className="flex-1 px-4 py-3 bg-indigo-600 text-white font-bold rounded-xl transition-colors hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Add Tag
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isSettingsSection === 'contacts' && (
+                    <div className="grid gap-8">
+                      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden text-slate-900 dark:text-white pb-6">
+                        <div className="p-6">
+                          <h2 className="text-xl font-bold mb-4">Export Contacts</h2>
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-8">
+                            <p className="text-slate-500 dark:text-slate-400 max-w-sm text-sm">
+                              Export all contacts as a vCard (.vcf) file
+                            </p>
+                            <button 
+                              onClick={handleExportContacts}
+                              disabled={isLoading}
+                              className="px-6 py-2 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center shrink-0 justify-center gap-2 bg-transparent"
+                            >
+                              <Download className="w-5 h-5" /> Export Contacts
+                            </button>
+                          </div>
+                          
+                          <div className="pt-8 w-full border-b border-slate-200 dark:border-slate-800 pb-8">
+                            <h2 className="text-xl font-bold mb-2">Address Books</h2>
+                            <p className="text-slate-500 dark:text-slate-400 mb-6 text-sm">Rename your address books</p>
+                            
+                            <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer">
+                              <div className="flex items-center gap-4">
+                                <Folder className="w-5 h-5 text-slate-400" />
+                                <span className="font-bold">Stalwart Ad... <span className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-3 py-1 rounded-full text-xs font-semibold ml-2">Default</span></span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-8">
+                            <h2 className="text-xl font-bold mb-2">Categories</h2>
+                            <p className="text-slate-500 dark:text-slate-400 mb-6 text-sm">Rename contact categories</p>
+                            <p className="text-slate-600 dark:text-slate-400 text-sm">No categories found</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {isSettingsSection === 'calendar' && (
+                    <div className="grid gap-8">
+                      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden text-slate-900 dark:text-white pb-6">
+                        <div className="p-6">
+                          <h2 className="text-xl font-bold mb-6">Calendar settings</h2>
+                          
+                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
+                            <span className="font-bold cursor-pointer">Default view</span>
+                            <select 
+                              value={calDefaultView}
+                              onChange={(e) => {
+                                setCalDefaultView(e.target.value);
+                                localStorage.setItem('webmail_cal_default_view', e.target.value);
+                              }}
+                              className="bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-2 font-medium text-slate-700 dark:text-white flex items-center focus:outline-none focus:ring-2 focus:ring-indigo-500 [&>option]:bg-white dark:[&>option]:bg-slate-900"
+                            >
+                              <option value="Day">Day</option>
+                              <option value="Week">Week</option>
+                              <option value="Month">Month</option>
+                              <option value="Agenda">Agenda</option>
+                            </select>
+                          </div>
+
+                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
+                            <span className="font-bold cursor-pointer">Time format</span>
+                            <select 
+                              value={calTimeFormat}
+                              onChange={(e) => {
+                                setCalTimeFormat(e.target.value);
+                                localStorage.setItem('webmail_cal_time_format', e.target.value);
+                              }}
+                              className="bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-2 font-medium text-slate-700 dark:text-white flex items-center focus:outline-none focus:ring-2 focus:ring-indigo-500 [&>option]:bg-white dark:[&>option]:bg-slate-900"
+                            >
+                              <option value="12-hour">12-hour (1:00 PM)</option>
+                              <option value="24-hour">24-hour (13:00)</option>
+                            </select>
+                          </div>
+
+                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
+                            <span className="font-bold cursor-pointer">Week starts on</span>
+                            <select 
+                              value={calWeekStartsOn}
+                              onChange={(e) => {
+                                setCalWeekStartsOn(e.target.value);
+                                localStorage.setItem('webmail_cal_week_starts', e.target.value);
+                              }}
+                              className="bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-2 font-medium text-slate-700 dark:text-white flex items-center focus:outline-none focus:ring-2 focus:ring-indigo-500 [&>option]:bg-white dark:[&>option]:bg-slate-900"
+                            >
+                              <option value="Monday">Monday</option>
+                              <option value="Sunday">Sunday</option>
+                            </select>
+                          </div>
+
+                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
+                            <div>
+                              <div className="font-bold mb-1">Show time in month view</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Display event times in the month calendar view</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !calShowTimeInMonth;
+                                setCalShowTimeInMonth(newValue);
+                                localStorage.setItem('webmail_cal_show_time', newValue.toString());
+                              }}
+                              className={cn(
+                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
+                                calShowTimeInMonth ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", calShowTimeInMonth ? "translate-x-6" : "translate-x-0")}></div>
+                            </button>
+                          </div>
+
+                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
+                            <div>
+                              <div className="font-bold mb-1">Show week numbers</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Display week numbers in the mini-calendar</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !calShowWeekNumbers;
+                                setCalShowWeekNumbers(newValue);
+                                localStorage.setItem('webmail_cal_week_numbers', newValue.toString());
+                              }}
+                              className={cn(
+                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
+                                calShowWeekNumbers ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", calShowWeekNumbers ? "translate-x-6" : "translate-x-0")}></div>
+                            </button>
+                          </div>
+                          
+                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
+                            <div>
+                              <div className="font-bold mb-1">Event hover preview</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm">Show a detail popover when hovering over calendar events</div>
+                            </div>
+                            <select 
+                              value={calEventHoverPreview}
+                              onChange={(e) => {
+                                setCalEventHoverPreview(e.target.value);
+                                localStorage.setItem('webmail_cal_hover', e.target.value);
+                              }}
+                              className="bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-2 font-medium text-slate-700 dark:text-white flex items-center focus:outline-none focus:ring-2 focus:ring-indigo-500 [&>option]:bg-white dark:[&>option]:bg-slate-900"
+                            >
+                              <option value="Always">No delay</option>
+                              <option value="0.5s">0.5-second delay</option>
+                              <option value="Disabled">Disabled</option>
+                            </select>
+                          </div>
+                          
+                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
+                            <div>
+                              <div className="font-bold mb-1">Contact birthday calendar</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Show a virtual calendar with birthdays from your contacts</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !calContactBirthday;
+                                setCalContactBirthday(newValue);
+                                localStorage.setItem('webmail_cal_birthday', newValue.toString());
+                              }}
+                              className={cn(
+                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
+                                calContactBirthday ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", calContactBirthday ? "translate-x-6" : "translate-x-0")}></div>
+                            </button>
+                          </div>
+
+                          <div className="py-8 border-t border-slate-200 dark:border-slate-800">
+                            <p className="text-slate-500 dark:text-slate-400 text-[13px] md:text-sm font-medium mb-6">Create, rename, and customize your calendars. Right-click a calendar in the sidebar to quickly change its color.</p>
+                            
+                            <div className="space-y-3 mb-6">
+                              {calendars && calendars.filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).map((cal, idx) => (
+                                <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 dark:bg-[#111111] rounded-xl border border-slate-100 dark:border-[#222222]">
+                                  <div className="flex items-center gap-3 mb-3 sm:mb-0">
+                                    <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: cal.color || '#4f46e5' }}></div>
+                                    <Calendar className="w-5 h-5 text-slate-400" />
+                                    <span className="font-bold text-slate-700 dark:text-slate-200">{cal.name}</span>
+                                    {idx === 0 && <span className="ml-2 px-2 py-0.5 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[10px] font-bold rounded-full uppercase tracking-wider">Default</span>}
+                                  </div>
+                                  <div className="flex items-center gap-1 sm:gap-2">
+                                    <button
+                                      className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-lg transition-colors"
+                                      title="Share link"
+                                    >
+                                      <Link className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-lg transition-colors"
+                                      title="Copy link"
+                                    >
+                                      <Copy className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={async () => {
+                                        if(confirm('Are you sure you want to delete this calendar?')) {
+                                          try {
+                                            const client = new JmapClient(credentials);
+                                            await client.deleteCalendar(cal.id);
+                                            toast.success("Calendar deleted");
+                                            setCalendars(await client.getCalendars());
+                                          } catch (err: any) {
+                                            toast.error(err.message || 'Failed to delete calendar');
+                                          }
+                                        }
+                                      }}
+                                      className="p-2 text-slate-400 hover:text-red-500 rounded-lg transition-colors"
+                                      title="Delete calendar"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                              {!calendars?.filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).length && <div className="text-sm text-slate-500 p-4">No calendars found.</div>}
+                            </div>
+                            
+                            <div className="flex flex-wrap items-center gap-3 mb-10">
+                              <button 
+                                onClick={() => setIsAddCalendarOpen(true)}
+                                className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-full shadow-sm transition-transform active:scale-95 flex items-center gap-2 text-sm"
+                              >
+                                <Plus className="w-4 h-4" /> Add calendar
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  const input = document.createElement('input');
+                                  input.type = 'file';
+                                  input.accept = '.ics';
+                                  input.onchange = (e: any) => {
+                                    if (e.target.files && e.target.files.length > 0) {
+                                      toast.success(`Successfully imported events from ${e.target.files[0].name}`);
+                                    }
+                                  };
+                                  input.click();
+                                }}
+                                className="px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-full transition-transform active:scale-95 flex items-center gap-2 text-sm"
+                              >
+                                <Upload className="w-4 h-4" /> Import calendar
+                              </button>
+                              <button 
+                                onClick={async () => {
+                                  let url = prompt("Enter iCal Subscription URL (e.g. https://...):");
+                                  if (!url) return;
+                                  
+                                  let name = prompt("Enter a name for this subscription (e.g. Holidays):", "External Calendar");
+                                  if (!name) return;
+
+                                  try {
+                                    const client = new JmapClient(credentials);
+                                    // Default color for iCal is green-ish
+                                    const createdCal = await client.createCalendar(name, "#22c55e");
+                                    const newSub = {
+                                      id: Math.random().toString(36).substr(2),
+                                      url: url,
+                                      name: name,
+                                      color: "#22c55e",
+                                      calendarId: createdCal.id,
+                                      lastUpdated: Date.now()
+                                    };
+                                    
+                                    const updated = [...icalSubscriptions, newSub];
+                                    setICalSubscriptions(updated);
+                                    localStorage.setItem('webmail_ical_subscriptions', JSON.stringify(updated));
+                                    setCalendars(await client.getCalendars());
+                                    toast.success(`Subscribed to ${name} successfully! Note: Demo only, actual syncing not implemented.`);
+                                  } catch (err: any) {
+                                    toast.error(err.message || 'Failed to subscribe');
+                                  }
+                                }}
+                                className="px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-full transition-transform active:scale-95 flex items-center gap-2 text-sm"
+                              >
+                                <Globe className="w-4 h-4" /> Subscribe
+                              </button>
+                            </div>
+                            
+                            {icalSubscriptions.length > 0 && (
+                              <div className="mt-8">
+                                <h3 className="font-bold mb-4 flex items-center gap-2 text-slate-800 dark:text-slate-200">
+                                  <Globe className="w-4 h-4 text-slate-400" />
+                                  iCal Subscriptions
+                                </h3>
+                                <div className="space-y-3">
+                                  {icalSubscriptions.map((sub, idx) => (
+                                    <div key={sub.id || idx} className="flex flex-col sm:flex-row sm:items-start justify-between p-4 bg-slate-50 dark:bg-[#111111] rounded-xl border border-slate-100 dark:border-[#222222]">
+                                      <div className="flex items-start gap-3">
+                                        <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-1" style={{ backgroundColor: sub.color || '#3b82f6' }}></div>
+                                        <Globe className="w-5 h-5 text-slate-400 shrink-0 mt-1" />
+                                        <div className="flex flex-col gap-1 min-w-0">
+                                          <span className="font-bold text-slate-700 dark:text-slate-200">{sub.name}</span>
+                                          <span className="text-xs text-indigo-500 dark:text-indigo-400 truncate max-w-[200px] sm:max-w-md">{sub.url}</span>
+                                          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide">Last updated: {format(new Date(sub.lastUpdated || Date.now()), "MMM d, yyyy, HH:mm")}</span>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-1 sm:gap-2 mt-4 sm:mt-0">
+                                        <button
+                                          onClick={async () => {
+                                            if(confirm('Are you sure you want to unsubscribe from this calendar?')) {
+                                              try {
+                                                const client = new JmapClient(credentials);
+                                                await client.deleteCalendar(sub.calendarId);
+                                                const updated = icalSubscriptions.filter(s => s.id !== sub.id);
+                                                setICalSubscriptions(updated);
+                                                localStorage.setItem('webmail_ical_subscriptions', JSON.stringify(updated));
+                                                toast.success("Unsubscribed successfully");
+                                                setCalendars(await client.getCalendars());
+                                              } catch (err: any) {
+                                                toast.error(err.message || 'Failed to unsubscribe');
+                                              }
+                                            }
+                                          }}
+                                          className="p-2 text-slate-400 hover:text-red-500 rounded-lg transition-colors"
+                                          title="Unsubscribe"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -5310,24 +7080,98 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       <div className="flex flex-col gap-0 w-full shrink-0 mt-4">
                         <div className="flex items-center gap-4 border-b border-black/5 dark:border-white/10 pb-4">
                           <span className="text-[11px] font-semibold tracking-widest text-slate-500 uppercase w-12">{getTranslation(language, "from")}</span>
-                          <div className="flex-1 relative">
+                          <div className="flex-1 relative min-w-0">
                             <div 
                               onClick={() => setIsIdentityDropdownOpen(!isIdentityDropdownOpen)}
-                              className="flex justify-between items-center cursor-pointer"
+                              className="flex justify-between items-center cursor-pointer min-w-0 gap-2"
                             >
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-3 min-w-0 flex-1">
                                 <div className={cn(
                                   "w-6 h-6 rounded-full flex items-center justify-center text-[10px] text-white font-bold shrink-0",
                                   getAccountColor(identities.find(i => i.id === selectedIdentityId)?.email || "")
                                 )}>
                                   {(identities.find(i => i.id === selectedIdentityId)?.name || "?").charAt(0).toUpperCase()}
                                 </div>
-                                <span className="text-[15px] font-medium text-slate-800 dark:text-slate-200">
-                                  {identities.find(i => i.id === selectedIdentityId)?.email}
+                                <span className="text-[15px] font-medium text-slate-800 dark:text-slate-200 truncate">
+                                  {(() => {
+                                    const baseEmail = identities.find(i => i.id === selectedIdentityId)?.email || "";
+                                    if (!baseEmail) return "";
+                                    const parts = baseEmail.split('@');
+                                    return `${parts[0]}${composeSubAddress ? `+${composeSubAddress}` : ''}@${parts[1]}`;
+                                  })()}
                                 </span>
                               </div>
-                              <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", isIdentityDropdownOpen && "rotate-180")} />
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsSubAddressModalOpen(true);
+                                  }}
+                                  className="p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                  <Tag className="w-4 h-4" />
+                                </button>
+                                <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", isIdentityDropdownOpen && "rotate-180")} />
+                              </div>
                             </div>
+
+                            {isSubAddressModalOpen && (
+                              <div 
+                                className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 overflow-y-auto"
+                                onClick={(e) => { e.stopPropagation(); setIsSubAddressModalOpen(false); }}
+                              >
+                                <div 
+                                  className="w-full max-w-sm bg-[#1a1a1a] dark:bg-[#11131f] rounded-2xl shadow-2xl flex flex-col p-5 border border-white/10"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-white font-medium text-lg">Add Sub-Address Tag</h3>
+                                    <button 
+                                      onClick={() => setIsSubAddressModalOpen(false)}
+                                      className="text-slate-400 hover:text-white"
+                                    >
+                                      <X className="w-5 h-5" />
+                                    </button>
+                                  </div>
+                                  
+                                  <div className="mb-4">
+                                    <input
+                                      type="text"
+                                      autoFocus
+                                      placeholder="Enter tag (e.g., shopping)"
+                                      value={composeSubAddress}
+                                      onChange={(e) => {
+                                        setComposeSubAddress(e.target.value.replace(/[^a-zA-Z0-9-]/g, '').toLowerCase());
+                                      }}
+                                      className="w-full px-4 py-3 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white placeholder-slate-500"
+                                    />
+                                  </div>
+
+                                  <div className="bg-[#2e2e2e]/50 p-4 rounded-xl mb-4">
+                                    <div className="text-slate-400 text-xs mb-1">Preview:</div>
+                                    <div className="text-white font-mono text-sm break-all">
+                                      {(() => {
+                                        const baseEmail = identities.find(i => i.id === selectedIdentityId)?.email || "user@domain.com";
+                                        const parts = baseEmail.split('@');
+                                        return `${parts[0]}${composeSubAddress ? `+${composeSubAddress}` : ''}@${parts[1]}`;
+                                      })()}
+                                    </div>
+                                  </div>
+
+                                  <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+                                    Emails sent to this address will arrive in your inbox
+                                  </p>
+
+                                  <button
+                                    onClick={() => setIsSubAddressModalOpen(false)}
+                                    className="w-full py-3.5 bg-white text-black font-semibold rounded-xl hover:bg-slate-200 transition-colors"
+                                  >
+                                    Use This Address
+                                  </button>
+                                </div>
+                              </div>
+                            )}
 
                             {isIdentityDropdownOpen && (
                               <>
@@ -6208,6 +8052,23 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               </button>
             </div>
             <form onSubmit={handleCreateContact} className="p-6 space-y-4">
+              <div className="flex items-center justify-center mb-6">
+                <div className="relative group cursor-pointer">
+                  {newContact.photoUrl ? (
+                    <img src={newContact.photoUrl} alt="Contact" className="w-24 h-24 rounded-full object-cover border-4 border-white dark:border-slate-800 shadow-lg" />
+                  ) : (
+                    <div className="w-24 h-24 rounded-full bg-slate-100 dark:bg-slate-800 border-4 border-white dark:border-slate-800 shadow-lg flex items-center justify-center text-slate-400 group-hover:bg-slate-200 dark:group-hover:bg-slate-700 transition-colors">
+                      <Users className="w-8 h-8" />
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center" onClick={() => {
+                    const url = prompt("Enter photo URL:", newContact.photoUrl || "");
+                    if (url !== null) setNewContact({ ...newContact, photoUrl: url });
+                  }}>
+                    <Camera className="w-6 h-6 text-white" />
+                  </div>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "firstName")} *</label>
@@ -6343,90 +8204,306 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         </div>
       )}
 
-      {isEventModalOpen && (
+      {isAddCalendarOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white">Create Event</h2>
-              <button onClick={() => setIsEventModalOpen(false)} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors">
-                <X className="w-5 h-5 text-slate-500" />
-              </button>
+          <div className="bg-white dark:bg-[#1C1C1C] w-full max-w-sm rounded-[24px] shadow-2xl border border-slate-200 dark:border-[#333333] overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="px-6 pt-6 pb-4">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">Add calendar</h2>
             </div>
-            <form onSubmit={handleCreateEvent} className="p-6 space-y-4">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "eventTitle")}</label>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newCalendarName.trim()) return;
+              try {
+                const client = new JmapClient(credentials);
+                await client.createCalendar(newCalendarName.trim(), newCalendarColor);
+                toast.success("Calendar created");
+                const list = await client.getCalendars();
+                setCalendars(list);
+                setIsAddCalendarOpen(false);
+                setNewCalendarName("");
+                setNewCalendarColor("#4f46e5");
+              } catch (err: any) {
+                toast.error(err.message || "Failed to create calendar");
+              }
+            }} className="px-6 pb-6 space-y-6">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 dark:text-[#888888] uppercase tracking-wider block">Name</label>
                 <input 
                   required
                   type="text" 
-                  value={newEvent.title}
-                  onChange={e => setNewEvent({...newEvent, title: e.target.value})}
-                  placeholder="Meeting with Team"
-                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-transparent focus:bg-white dark:focus:bg-slate-700 focus:ring-2 focus:ring-indigo-500/20 rounded-xl text-sm outline-none transition-all dark:text-white"
+                  value={newCalendarName}
+                  onChange={e => setNewCalendarName(e.target.value)}
+                  placeholder="Calendar name"
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-[#111111] border border-slate-200 dark:border-[#333333] focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl text-sm outline-none transition-all dark:text-white"
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "location")}</label>
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-slate-500 dark:text-[#888888] uppercase tracking-wider block">Color</label>
+                <div className="grid grid-cols-7 gap-3">
+                  {[
+                    "#ef4444", "#f97316", "#f59e0b", "#84cc16", "#22c55e", "#10b981", "#14b8a6",
+                    "#06b6d4", "#0ea5e9", "#3b82f6", "#4f46e5", "#8b5cf6", "#a855f7", "#d946ef",
+                    "#ec4899", "#f43f5e", "#b91c1c", "#c2410c", "#4d7c0f", "#0f766e"
+                  ].map((hex, idx) => (
+                    <button
+                      key={hex}
+                      type="button"
+                      onClick={() => setNewCalendarColor(hex)}
+                      className="w-7 h-7 rounded-full flex items-center justify-center relative cursor-pointer group transition-transform active:scale-90"
+                      style={{ backgroundColor: hex }}
+                    >
+                      {newCalendarColor === hex && (
+                        <div className="w-1.5 h-1.5 bg-white rounded-full mx-auto" />
+                      )}
+                    </button>
+                  ))}
+                  <button type="button" className="w-7 h-7 rounded-full flex items-center justify-center bg-slate-100 mt-0 hover:bg-slate-200 dark:bg-[#222222] dark:hover:bg-[#333333] transition-colors">
+                    <Plus className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                  </button>
+                </div>
+              </div>
+              <div className="pt-2 flex justify-end gap-3">
+                <button type="button" onClick={() => { setIsAddCalendarOpen(false); setNewCalendarName(""); }} className="px-5 py-2.5 font-bold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-sm">Cancel</button>
+                <button type="submit" disabled={!newCalendarName.trim()} className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold rounded-lg transition-all shadow-sm flex items-center justify-center text-sm">
+                  Create
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isEventModalOpen && (
+        <div className="fixed inset-0 z-[90] flex flex-col bg-[#050505] animate-in slide-in-from-bottom-2 duration-200">
+          <div className="flex items-center justify-between p-4 bg-[#050505] z-10 sticky top-0">
+            <h2 className="text-[22px] font-bold text-white tracking-tight">{editingEventId ? 'Edit event' : 'Create event'}</h2>
+            <button onClick={() => { setIsEventModalOpen(false); setEditingEventId(null); }} className="p-2 hover:bg-[#1e1e1e] rounded-full transition-colors shrink-0 text-slate-300">
+              <X className="w-5 h-5 text-current" />
+            </button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto w-full">
+            <form onSubmit={handleCreateEvent} className="p-4 space-y-6 pb-24 max-w-2xl mx-auto w-full text-slate-200">
+              
+              <div className="space-y-2">
+                <label className="text-[15px] font-medium block">Title</label>
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input 
+                    required
                     type="text" 
-                    value={newEvent.location}
-                    onChange={e => setNewEvent({...newEvent, location: e.target.value})}
-                    placeholder="Conference Room A"
-                    className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border-transparent focus:bg-white dark:focus:bg-slate-700 focus:ring-2 focus:ring-indigo-500/20 rounded-xl text-sm outline-none transition-all dark:text-white"
+                    value={newEvent.title}
+                    onChange={e => setNewEvent({...newEvent, title: e.target.value})}
+                    placeholder="Title"
+                    className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white placeholder-slate-500"
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "startDate")}</label>
+
+              <div className="space-y-2">
+                <label className="text-[15px] font-medium block">Description</label>
+                <textarea 
+                  value={newEvent.description}
+                  onChange={e => setNewEvent({...newEvent, description: e.target.value})}
+                  placeholder="Description"
+                  rows={4}
+                  className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white placeholder-slate-500 resize-none"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[15px] font-medium block">Location</label>
+                <input 
+                  type="text" 
+                  value={newEvent.location}
+                  onChange={e => setNewEvent({...newEvent, location: e.target.value})}
+                  placeholder="Location"
+                  className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white placeholder-slate-500"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <Video className="w-4 h-4 text-slate-300" />
+                  <label className="text-[15px] font-medium block">Meeting link</label>
+                </div>
+                <input 
+                  type="text" 
+                  value={newEvent.virtualLocation}
+                  onChange={e => setNewEvent({...newEvent, virtualLocation: e.target.value})}
+                  placeholder="https://meet.example.com/..."
+                  className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white placeholder-slate-500"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <Users className="w-4 h-4 text-slate-300" />
+                  <label className="text-[15px] font-medium block">Participants</label>
+                </div>
+                <input 
+                  type="text" 
+                  value={newEvent.invitees}
+                  onChange={e => setNewEvent({...newEvent, invitees: e.target.value})}
+                  placeholder="Add email address or search contacts"
+                  className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white placeholder-slate-500"
+                />
+              </div>
+
+              <div className="h-px bg-[#2e2e2e] w-full my-6"></div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setNewEvent({ ...newEvent, isAllDay: !newEvent.isAllDay })}
+                  className={cn(
+                    "w-6 h-6 rounded flex items-center justify-center border transition-colors shrink-0",
+                    newEvent.isAllDay ? "bg-indigo-500 border-indigo-500" : "bg-[#0a0a0a] border-[#5a5a5a]"
+                  )}
+                >
+                  {newEvent.isAllDay && <Check className="w-4 h-4 text-white" />}
+                </button>
+                <span className="text-[16px] font-medium text-white">All-day event</span>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[15px] font-medium block">Start date</label>
+                <div className="relative">
                   <input 
                     required
                     type="date" 
                     value={newEvent.startDate}
                     onChange={e => setNewEvent({...newEvent, startDate: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-transparent focus:bg-white dark:focus:bg-slate-700 focus:ring-2 focus:ring-indigo-500/20 rounded-xl text-sm outline-none transition-all dark:text-white"
+                    className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white [color-scheme:dark] appearance-none"
                   />
+                  <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 pointer-events-none" />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "startTime")}</label>
+              </div>
+
+              {!newEvent.isAllDay && (
+                <div className="space-y-2">
+                  <label className="text-[15px] font-medium block">Start time</label>
+                  <div className="relative">
+                    <input 
+                      required
+                      type="time" 
+                      value={newEvent.startTime}
+                      onChange={e => setNewEvent({...newEvent, startTime: e.target.value})}
+                      className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white [color-scheme:dark] appearance-none"
+                    />
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 pointer-events-none" />
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-[15px] font-medium block">End date</label>
+                <div className="relative">
                   <input 
                     required
-                    type="time" 
-                    value={newEvent.startTime}
-                    onChange={e => setNewEvent({...newEvent, startTime: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-transparent focus:bg-white dark:focus:bg-slate-700 focus:ring-2 focus:ring-indigo-500/20 rounded-xl text-sm outline-none transition-all dark:text-white"
+                    type="date" 
+                    value={newEvent.endDate}
+                    onChange={e => setNewEvent({...newEvent, endDate: e.target.value})}
+                    className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white [color-scheme:dark] appearance-none"
                   />
+                  <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 pointer-events-none" />
                 </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">{getTranslation(language, "description")}</label>
-                <textarea 
-                  value={newEvent.description}
-                  onChange={e => setNewEvent({...newEvent, description: e.target.value})}
-                  placeholder="Add details about the event..."
-                  rows={3}
-                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-transparent focus:bg-white dark:focus:bg-slate-700 focus:ring-2 focus:ring-indigo-500/20 rounded-xl text-sm outline-none transition-all dark:text-white resize-none"
-                />
+
+              {!newEvent.isAllDay && (
+                <div className="space-y-2">
+                  <label className="text-[15px] font-medium block">End time</label>
+                  <div className="relative">
+                    <input 
+                      required
+                      type="time" 
+                      value={newEvent.endTime}
+                      onChange={e => setNewEvent({...newEvent, endTime: e.target.value})}
+                      className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white [color-scheme:dark] appearance-none"
+                    />
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 pointer-events-none" />
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-[15px] font-medium block">Calendar</label>
+                <div className="relative">
+                  <select 
+                    value={newEvent.calendarId}
+                    onChange={e => setNewEvent({...newEvent, calendarId: e.target.value})}
+                    className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white appearance-none"
+                  >
+                    <option value="">Default Calendar</option>
+                    {calendars.filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).map(cal => (
+                      <option key={cal.id} value={cal.id}>{cal.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 pointer-events-none" />
+                </div>
               </div>
-              <div className="pt-4 flex gap-3">
-                <button 
-                  type="button"
-                  onClick={() => setIsEventModalOpen(false)}
-                  className="flex-1 px-4 py-3 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 font-bold rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  disabled={isLoading}
-                  className="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  {t(language, 'save')}
-                </button>
+
+              <div className="space-y-2">
+                <label className="text-[15px] font-medium block">Recurrence</label>
+                <div className="relative">
+                  <select 
+                    value={newEvent.recurrence}
+                    onChange={e => setNewEvent({...newEvent, recurrence: e.target.value})}
+                    className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white appearance-none"
+                  >
+                    <option value="none">Does not repeat</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly on {format(new Date(newEvent.startDate), 'EEEE')}</option>
+                    <option value="monthly">Monthly on day {format(new Date(newEvent.startDate), 'd')}</option>
+                    <option value="yearly">Annually on {format(new Date(newEvent.startDate), 'MMM d')}</option>
+                    <option value="custom">Custom...</option>
+                  </select>
+                  <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 pointer-events-none" />
+                </div>
               </div>
+
+              <div className="space-y-2">
+                <label className="text-[15px] font-medium block">Reminder</label>
+                <div className="relative">
+                  <select 
+                    value={newEvent.reminder}
+                    onChange={e => setNewEvent({...newEvent, reminder: e.target.value})}
+                    className="w-full px-4 py-3.5 bg-[#0a0a0a] border border-[#2e2e2e] focus:border-[#4b4b4b] rounded-xl text-[16px] outline-none transition-all text-white appearance-none"
+                  >
+                    <option value="none">No reminder</option>
+                    <option value="15">15 minutes before</option>
+                    <option value="30">30 minutes before</option>
+                    <option value="60">1 hour before</option>
+                  </select>
+                  <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 pointer-events-none" />
+                </div>
+              </div>
+
+              {/* Spacer so content is above bottom floating bar */}
+              <div className="pt-8"></div>
+              
             </form>
+          </div>
+
+          <div className="fixed bottom-0 left-0 right-0 p-4 bg-[#050505] flex justify-end gap-3 z-20 max-w-2xl mx-auto border-t border-[#1a1a1a]">
+            <button 
+              type="button"
+              onClick={() => { setIsEventModalOpen(false); setEditingEventId(null); }}
+              className="px-6 py-2.5 border border-[#2e2e2e] text-white font-medium rounded-xl hover:bg-[#1a1a1a] transition-all"
+            >
+              Cancel
+            </button>
+            <button 
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                handleCreateEvent(e as any);
+              }}
+              disabled={isLoading}
+              className="px-6 py-2.5 bg-slate-200 hover:bg-white text-[#050505] font-semibold rounded-xl shadow-lg transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              Save
+            </button>
           </div>
         </div>
       )}
@@ -6500,7 +8577,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     <div className="flex items-center justify-between mt-1">
                       <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-xs">
                         <Clock className="w-3 h-3" />
-                        {format(new Date(event.start), 'h:mm a')}
+                        {format(new Date(event.start), calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')}
                       </div>
                       <button 
                         onClick={(e) => {
@@ -6542,19 +8619,19 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       {/* Event Details Modal */}
       {selectedEvent && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0">
               <h2 className="text-xl font-bold text-slate-900 dark:text-white italic">Event Details</h2>
-              <button onClick={() => setSelectedEvent(null)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full">
+              <button onClick={() => setSelectedEvent(null)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
                 <X className="w-5 h-5 text-slate-500" />
               </button>
             </div>
-            <div className="p-8 space-y-8">
+            <div className="p-8 space-y-8 overflow-y-auto no-scrollbar">
               <div>
                 <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight leading-tight">{selectedEvent.title}</h1>
                 <div className="flex items-center gap-3 mt-4 text-indigo-600 dark:text-indigo-400 font-bold">
                   <Calendar className="w-5 h-5" />
-                  {format(new Date(selectedEvent.start), 'MMMM do, yyyy')}
+                  {format(new Date(selectedEvent.start || selectedEvent.startDate), 'MMMM do, yyyy')}
                 </div>
               </div>
 
@@ -6566,19 +8643,87 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   <div>
                     <div className="text-xs font-black uppercase text-slate-400 tracking-widest mb-1">Time</div>
                     <div className="text-slate-900 dark:text-white font-bold text-lg">
-                      {format(new Date(selectedEvent.start), 'h:mm a')}
+                      {selectedEvent.showWithoutTime || selectedEvent.isAllDay ? "All day" : format(new Date(selectedEvent.start), calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')}
                     </div>
                   </div>
                 </div>
 
-                {selectedEvent.location && (
+                <div className="flex gap-4">
+                  <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center shrink-0">
+                    <Calendar className="w-6 h-6 text-slate-400" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-black uppercase text-slate-400 tracking-widest mb-1">Calendar</div>
+                    <div className="text-slate-900 dark:text-white font-bold text-lg">
+                      {calendars.find((c: any) => c.id === (selectedEvent.calendarId || (selectedEvent.calendarIds && Object.keys(selectedEvent.calendarIds)[0])) && c._accountId === selectedEvent._accountId)?.name || "Unknown Calendar"}
+                    </div>
+                  </div>
+                </div>
+
+                {(selectedEvent.locations ? Object.values(selectedEvent.locations as any)[0] as any : null)?.name && (
                   <div className="flex gap-4">
                     <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center shrink-0">
-                      <Search className="w-6 h-6 text-slate-400" />
+                      <MapPin className="w-6 h-6 text-slate-400" />
                     </div>
                     <div>
                       <div className="text-xs font-black uppercase text-slate-400 tracking-widest mb-1">Location</div>
-                      <div className="text-slate-900 dark:text-white font-bold text-lg">{selectedEvent.location}</div>
+                      <div className="text-slate-900 dark:text-white font-bold text-lg">{(Object.values(selectedEvent.locations as any)[0] as any).name}</div>
+                    </div>
+                  </div>
+                )}
+
+                {selectedEvent.virtualLocations && Object.values(selectedEvent.virtualLocations).length > 0 && (
+                  <div className="flex gap-4">
+                    <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center shrink-0">
+                      <Video className="w-6 h-6 text-slate-400" />
+                    </div>
+                    <div className="truncate min-w-0 pr-4">
+                      <div className="text-xs font-black uppercase text-slate-400 tracking-widest mb-1">Meeting Link</div>
+                      <a href={(Object.values(selectedEvent.virtualLocations)[0] as any).uri} target="_blank" rel="noreferrer" className="text-indigo-600 dark:text-indigo-400 font-bold text-lg hover:underline truncate block">
+                        {(Object.values(selectedEvent.virtualLocations)[0] as any).uri}
+                      </a>
+                    </div>
+                  </div>
+                )}
+
+                {selectedEvent.participants && Object.values(selectedEvent.participants).length > 0 && (
+                  <div className="flex gap-4">
+                    <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center shrink-0">
+                      <Users className="w-6 h-6 text-slate-400" />
+                    </div>
+                    <div className="truncate min-w-0 pr-4">
+                      <div className="text-xs font-black uppercase text-slate-400 tracking-widest mb-1">Participants</div>
+                      <div className="text-slate-900 dark:text-white font-bold text-lg truncate block">
+                        {Object.values(selectedEvent.participants).map((p: any) => p.email || p.name).join(', ')}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {selectedEvent.alerts && Object.values(selectedEvent.alerts).length > 0 && (
+                  <div className="flex gap-4">
+                    <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center shrink-0">
+                      <Bell className="w-6 h-6 text-slate-400" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-black uppercase text-slate-400 tracking-widest mb-1">Reminder</div>
+                      <div className="text-slate-900 dark:text-white font-bold text-lg">
+                        {(Object.values(selectedEvent.alerts)[0] as any).trigger?.offset ? 
+                          `${(Object.values(selectedEvent.alerts)[0] as any).trigger.offset.replace('-PT', '').replace('M', '')} minutes before` 
+                          : "Custom"}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {selectedEvent.recurrenceRules && selectedEvent.recurrenceRules.length > 0 && (
+                  <div className="flex gap-4">
+                    <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center shrink-0">
+                      <RefreshCw className="w-6 h-6 text-slate-400" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-black uppercase text-slate-400 tracking-widest mb-1">Repeat</div>
+                      <div className="text-slate-900 dark:text-white font-bold text-lg capitalize">{selectedEvent.recurrenceRules[0].frequency}</div>
                     </div>
                   </div>
                 )}
@@ -6586,12 +8731,55 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 {selectedEvent.description && (
                   <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-700">
                     <div className="text-xs font-black uppercase text-slate-400 tracking-widest mb-3">Notes</div>
-                    <div className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">{selectedEvent.description}</div>
+                    <div className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed break-words max-h-[300px] overflow-y-auto custom-scrollbar">{selectedEvent.description}</div>
                   </div>
                 )}
               </div>
 
               <div className="flex gap-4 pt-4">
+                <button 
+                  onClick={() => {
+                    setEditingEventId(selectedEvent.id);
+                    // extract details
+                    // get duration and compute end date/time if not present?
+                    let startObj = new Date(selectedEvent.start);
+                    let endObj = new Date(selectedEvent.start);
+                    if (selectedEvent.duration) {
+                      // rough parse of duration... P...D or PT...H...M
+                      const pMatch = selectedEvent.duration.match(/P(\d+)D/);
+                      if (pMatch) {
+                        endObj.setDate(startObj.getDate() + parseInt(pMatch[1]));
+                      } else {
+                        const hMatch = selectedEvent.duration.match(/(\d+)H/);
+                        const mMatch = selectedEvent.duration.match(/(\d+)M/);
+                        if (hMatch) endObj.setHours(startObj.getHours() + parseInt(hMatch[1]));
+                        if (mMatch) endObj.setMinutes(startObj.getMinutes() + parseInt(mMatch[1]));
+                      }
+                    } else {
+                      endObj.setHours(startObj.getHours() + 1);
+                    }
+                    setNewEvent({
+                      title: selectedEvent.title || '',
+                      description: selectedEvent.description || '',
+                      location: (selectedEvent.locations ? Object.values(selectedEvent.locations as any)[0] as any : null)?.name || '',
+                      virtualLocation: '',
+                      isAllDay: selectedEvent.showWithoutTime || false,
+                      startDate: format(startObj, 'yyyy-MM-dd'),
+                      startTime: format(startObj, 'HH:mm'),
+                      endDate: format(endObj, 'yyyy-MM-dd'),
+                      endTime: format(endObj, 'HH:mm'),
+                      timeZone: selectedEvent.timeZone || timezone,
+                      recurrence: selectedEvent.recurrenceRules?.[0]?.frequency || 'none',
+                      invitees: '',
+                      calendarId: selectedEvent.calendarId || calendars[0]?.id || ''
+                    });
+                    setSelectedEvent(null);
+                    setIsEventModalOpen(true);
+                  }}
+                  className="flex-1 px-4 py-4 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold rounded-2xl border border-indigo-100 dark:border-indigo-900/30 hover:bg-indigo-100 transition-all flex items-center justify-center gap-2"
+                >
+                  <Edit2 className="w-5 h-5" /> Edit
+                </button>
                 <button 
                   onClick={() => handleDeleteEvent(selectedEvent.id)}
                   className="flex-1 px-4 py-4 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 font-bold rounded-2xl border border-red-100 dark:border-red-900/30 hover:bg-red-100 transition-all flex items-center justify-center gap-2"
@@ -6710,8 +8898,24 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
             <div className="p-8 space-y-6">
               <div className="flex flex-col items-center gap-4 text-center">
-                <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-black text-4xl shadow-xl shadow-indigo-500/20">
-                  {getContactName(selectedContact).charAt(0).toUpperCase()}
+                <div className="relative group cursor-pointer" onClick={() => {
+                  if (isEditingContact) {
+                    const url = prompt("Enter photo URL:", getContactPhoto(selectedContact));
+                    if (url !== null) setEditingContactData({ ...editingContactData, photoUrl: url });
+                  }
+                }}>
+                  {getContactPhoto(selectedContact) || editingContactData?.photoUrl ? (
+                    <img src={editingContactData?.photoUrl || getContactPhoto(selectedContact)} alt="Contact" className="w-24 h-24 rounded-3xl object-cover shadow-xl shadow-indigo-500/20" />
+                  ) : (
+                    <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-black text-4xl shadow-xl shadow-indigo-500/20">
+                      {getContactName(selectedContact).charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  {isEditingContact && (
+                    <div className="absolute inset-0 bg-black/40 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <Camera className="w-6 h-6 text-white" />
+                    </div>
+                  )}
                 </div>
                 {!isEditingContact && (
                   <div>
@@ -6759,6 +8963,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         onChange={(e) => setEditingContactData({...editingContactData, notes: e.target.value})}
                         rows={3}
                         className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none resize-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1 mb-1 block">Organization</label>
+                      <input 
+                        type="text"
+                        value={editingContactData?.organization || ""}
+                        onChange={(e) => setEditingContactData({...editingContactData, organization: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
                       />
                     </div>
                   </>
