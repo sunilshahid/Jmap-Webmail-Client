@@ -5,7 +5,7 @@ import {
   Reply, Forward, X, Edit3, Mail, LogOut, Loader2, Server,
   Calendar, Users, RefreshCw, Lock, Clock, Key, Shield, Plus, ExternalLink,
   Sparkles, Download, Upload, Bell, Check, MailCheck, Sun, Filter, ArrowLeft, Paperclip,
-  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile, Camera, Globe, Video, MapPin, Link, Copy
+  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile, Camera, Globe, Video, MapPin, Link, Copy, BookOpen
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "./lib/utils";
@@ -14,6 +14,7 @@ import { Mailbox, Email, Identity, Contact, Event, Account } from "./lib/types";
 import { JmapClient } from "./lib/jmap-client";
 import DOMPurify from 'dompurify';
 import { getTranslation } from "./lib/i18n";
+import ICAL from 'ical.js';
 
 // Use translation dictionary directly
 const t = getTranslation;
@@ -465,8 +466,8 @@ function HtmlEmailViewer({ htmlContent, attachments, credentials, isDarkMode }: 
 
 function AttachmentRenderer({ attachment, credentials, language }: { attachment: any, credentials: any, language: string, key?: any }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
-
   const [isLoading, setIsLoading] = useState(false);
+  const attachmentAction = localStorage.getItem('webmail_read_attachment_action') || 'preview';
 
   useEffect(() => {
     let currentUrl: string | null = null;
@@ -524,7 +525,7 @@ function AttachmentRenderer({ attachment, credentials, language }: { attachment:
   return (
     <a 
       href={objectUrl} 
-      download={attachment.name} 
+      {...(attachmentAction === 'download' ? { download: attachment.name } : { target: "_blank", rel: "noopener noreferrer" })}
       className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-sm font-semibold transition-all shadow-sm border border-slate-200/50 dark:border-slate-700/50 mt-2 hover:scale-105 active:scale-95"
     >
       <Paperclip className="w-4 h-4 text-indigo-500" /> 
@@ -898,10 +899,14 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [isAddCalendarOpen, setIsAddCalendarOpen] = useState(false);
   const [newCalendarName, setNewCalendarName] = useState("");
   const [newCalendarColor, setNewCalendarColor] = useState("#4f46e5");
+  const [isAddSubscriptionOpen, setIsAddSubscriptionOpen] = useState(false);
+  const [newSubscriptionUrl, setNewSubscriptionUrl] = useState("");
+  const [newSubscriptionName, setNewSubscriptionName] = useState("");
+  const [newSubscriptionColor, setNewSubscriptionColor] = useState("#22c55e");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importData, setImportData] = useState("");
   const [contactSuggestions, setContactSuggestions] = useState<any[]>([]);
-  const [newContact, setNewContact] = useState({ firstName: '', lastName: '', email: '', emailType: 'private', phone: '', phoneType: 'private', organization: '', notes: '', photoUrl: '' });
+  const [newContact, setNewContact] = useState({ firstName: '', lastName: '', email: '', emailType: 'private', phone: '', phoneType: 'private', organization: '', notes: '', photoUrl: '', birthday: '' });
   const [contactErrors, setContactErrors] = useState<Record<string, string>>({});
   const [newEvent, setNewEvent] = useState({ title: '', description: '', location: '', virtualLocation: '', isAllDay: false, startDate: format(new Date(), 'yyyy-MM-dd'), startTime: '09:00', endDate: format(new Date(), 'yyyy-MM-dd'), endTime: '10:00', timeZone: timezone, recurrence: 'none', invitees: '', calendarId: '', reminder: 'none' });
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
@@ -909,7 +914,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [eventErrors, setEventErrors] = useState<Record<string, string>>({});
   const [contactSearchQuery, setContactSearchQuery] = useState("");
   const [eventSearchQuery, setEventSearchQuery] = useState("");
-  const [isSettingsSection, setIsSettingsSection] = useState<'general' | 'account' | 'security' | 'advanced' | 'notifications' | 'vacation' | 'templates' | 'filters' | 'contacts' | 'tags' | 'calendar'>(() => {
+  const [isSettingsSection, setIsSettingsSection] = useState<'general' | 'account' | 'security' | 'advanced' | 'notifications' | 'vacation' | 'templates' | 'filters' | 'contacts' | 'tags' | 'calendar' | 'folders' | 'identities' | 'read' | 'compose'>(() => {
     return (localStorage.getItem('webmail_settings_section') as any) || 'account';
   });
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
@@ -919,6 +924,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [vacationFromDate, setVacationFromDate] = useState("");
   const [vacationToDate, setVacationToDate] = useState("");
   const [isSavingVacation, setIsSavingVacation] = useState(false);
+  const [hasVacationChanges, setHasVacationChanges] = useState(false);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -950,8 +956,40 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [calShowWeekNumbers, setCalShowWeekNumbers] = useState(() => localStorage.getItem('webmail_cal_week_numbers') === 'true');
   const [calEventHoverPreview, setCalEventHoverPreview] = useState(() => localStorage.getItem('webmail_cal_hover') || 'Always');
   const [calContactBirthday, setCalContactBirthday] = useState(() => localStorage.getItem('webmail_cal_birthday') === 'true');
+  const [calCompactMonthView, setCalCompactMonthView] = useState(() => localStorage.getItem('webmail_cal_month_compact') === 'true');
   const [calEnableTasks, setCalEnableTasks] = useState(() => localStorage.getItem('webmail_cal_tasks') === 'true');
+  const [hiddenCalendars, setHiddenCalendars] = useState<string[]>([]);
   const [calDefaultView, setCalDefaultView] = useState(() => localStorage.getItem('webmail_cal_default_view') || 'Month');
+  const [readAutoMark, setReadAutoMark] = useState(() => localStorage.getItem('webmail_read_auto_mark') || 'immediately');
+  const [readShowImages, setReadShowImages] = useState(() => localStorage.getItem('webmail_read_show_images') !== 'false');
+  const [readNextOnDelete, setReadNextOnDelete] = useState(() => localStorage.getItem('webmail_read_next_on_delete') !== 'false');
+  
+  const [readDeleteAction, setReadDeleteAction] = useState(() => localStorage.getItem('webmail_read_delete_action') || 'trash');
+  const [readArchiveMode, setReadArchiveMode] = useState(() => localStorage.getItem('webmail_read_archive_mode') || 'single');
+  const [readAttachmentAction, setReadAttachmentAction] = useState(() => localStorage.getItem('webmail_read_attachment_action') || 'preview');
+  const [readEmailsPerPage, setReadEmailsPerPage] = useState(() => parseInt(localStorage.getItem('webmail_read_emails_per_page') || '50', 10));
+  
+  const [readPermanentDeleteJunk, setReadPermanentDeleteJunk] = useState(() => localStorage.getItem('webmail_read_permanent_delete_junk') === 'true');
+  const [readShowPreviewText, setReadShowPreviewText] = useState(() => localStorage.getItem('webmail_read_show_preview_text') !== 'false');
+  const [readDisableConvGrouping, setReadDisableConvGrouping] = useState(() => localStorage.getItem('webmail_read_disable_conv_grouping') === 'true');
+  const [readPlainTextOnly, setReadPlainTextOnly] = useState(() => localStorage.getItem('webmail_read_plain_text_only') === 'true');
+  const [readAttachmentPosition, setReadAttachmentPosition] = useState(() => localStorage.getItem('webmail_read_attachment_position') || 'below_header');
+  const [readHideInlineImages, setReadHideInlineImages] = useState(() => localStorage.getItem('webmail_read_hide_inline_images') === 'true');
+  const [readQuickHoverActions, setReadQuickHoverActions] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('webmail_read_quick_hover_actions') || '["delete","star","read","archive"]');
+    } catch {
+      return ["delete","star","read","archive"];
+    }
+  });
+  const [readDisplayMode, setReadDisplayMode] = useState(() => localStorage.getItem('webmail_read_display_mode') || 'inline');
+  
+  const [composeFormat, setComposeFormat] = useState(() => localStorage.getItem('webmail_compose_format') || 'html');
+  const [composeUndoSend, setComposeUndoSend] = useState(() => parseInt(localStorage.getItem('webmail_compose_undo_send') || '5', 10));
+  const [composeAutoSave, setComposeAutoSave] = useState(() => parseInt(localStorage.getItem('webmail_compose_auto_save') || '1', 10));
+  const [composeAttachmentReminder, setComposeAttachmentReminder] = useState(() => localStorage.getItem('webmail_compose_attachment_reminder') || 'true');
+  const [composeAutoSelectIdentity, setComposeAutoSelectIdentity] = useState(() => localStorage.getItem('webmail_compose_auto_select_identity') || 'true');
+  
   const [calTimeFormat, setCalTimeFormat] = useState(() => localStorage.getItem('webmail_cal_time_format') || '12-hour');
   const [icalSubscriptions, setICalSubscriptions] = useState<any[]>(() => {
     try {
@@ -984,12 +1022,102 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           console.error(`Failed to load calendars/events for ${acc.username}:`, innerErr);
         }
       }
+
+      if (calContactBirthday && contacts && contacts.length > 0) {
+        const birthdayCalId = "virtual-birthdays";
+        allCals.push({
+          id: birthdayCalId,
+          name: "Birthdays",
+          color: "#f43f5e", // Rose
+          _accountId: accounts[0]?.username,
+          isVirtual: true
+        });
+
+        // Find birthdays in current range
+        const startYear = currentCalendarDate.getFullYear() - 1;
+        const endYear = currentCalendarDate.getFullYear() + 1;
+        
+        contacts.forEach((c: any) => {
+          if (c.anniversaries && typeof c.anniversaries === 'object') {
+            Object.values(c.anniversaries).forEach((ann: any) => {
+              if (ann.kind === 'birth' && ann.date) {
+                // date might be "1990-05-15" or "--05-15"
+                const match = ann.date.match(/(?:(\d{4}))?-(\d{2})-(\d{2})/);
+                if (match) {
+                  const [_, yearStr, monthStr, dayStr] = match;
+                  // Add this birthday for each year in range
+                  for (let y = startYear; y <= endYear; y++) {
+                    const eventDate = new Date(y, parseInt(monthStr)-1, parseInt(dayStr));
+                    const currentAge = yearStr ? y - parseInt(yearStr) : null;
+                    const contactName = c.name?.components?.join(' ') || c.name?.prefix || "Unknown Contact";
+                    allEvents.push({
+                      id: `birthday-${c.id}-${y}`,
+                      calendarId: birthdayCalId,
+                      title: `${contactName}'s Birthday${currentAge ? ` (${currentAge})` : ''}`,
+                      start: eventDate.toISOString(),
+                      isAllDay: true,
+                      _accountId: accounts[0]?.username,
+                      isVirtual: true
+                    });
+                  }
+                }
+              }
+            });
+          }
+        });
+      }
+
+      // Fetch external iCal subscriptions
+      for (const sub of icalSubscriptions) {
+        if (!allCals.find(c => c.id === sub.calendarId)) {
+          allCals.push({
+            id: sub.calendarId,
+            name: sub.name,
+            role: undefined,
+            _accountId: "external",
+            _color: sub.color || "#22c55e",
+            isVirtual: true
+          } as any);
+        }
+
+        try {
+          const proxyUrl = `/api/ical?url=${encodeURIComponent(sub.url)}`;
+          const response = await fetch(proxyUrl);
+          if (response.ok) {
+            const text = await response.text();
+            const jcalData = ICAL.parse(text);
+            const comp = new ICAL.Component(jcalData);
+            const vevents = comp.getAllSubcomponents("vevent");
+            
+            for (const vevent of vevents) {
+              try {
+                const event = new ICAL.Event(vevent);
+                allEvents.push({
+                  id: `ext-${sub.id}-${event.uid}`,
+                  title: event.summary,
+                  description: event.description,
+                  location: event.location,
+                  start: event.startDate?.toJSDate().toISOString() || new Date().toISOString(),
+                  end: event.endDate?.toJSDate().toISOString(),
+                  isAllDay: event.startDate?.isDate,
+                  calendarId: sub.calendarId,
+                  _accountId: sub.id,
+                  isExternal: true
+                });
+              } catch (evErr) {}
+            }
+          }
+        } catch (e) {
+          console.error("Failed fetching external calendar", sub.name, e);
+        }
+      }
+
       setCalendars(allCals);
       setEvents(allEvents);
     } catch (e) {
       console.error("Failed to load calendars/events:", e);
     }
-  }, [accounts, currentCalendarDate]);
+  }, [accounts, currentCalendarDate, calContactBirthday, contacts, icalSubscriptions]);
 
   useEffect(() => {
     if (activeApp === 'calendar') {
@@ -1300,6 +1428,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     { label: "Burn after reading", value: "burn" }
   ];
   const [searchQuery, setSearchQuery] = useState("");
+  const [isAdvancedSearchOpen, setIsAdvancedSearchOpen] = useState(false);
+  const [advancedSearch, setAdvancedSearch] = useState({
+    from: "",
+    to: "",
+    subject: "",
+    body: "",
+    mailboxId: "all",
+    after: "",
+    before: "",
+    title: "",
+    location: "",
+    name: "",
+    email: "",
+    organization: ""
+  });
   const [pullDistance, setPullDistance] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const [startY, setStartY] = useState(0);
@@ -1309,6 +1452,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     if (!isComposeOpen) {
       setIsScheduling(false);
       setScheduleTime("");
+      setComposeSubAddress("");
     }
   }, [isComposeOpen]);
 
@@ -1452,18 +1596,29 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     return "";
   };
 
-  const filteredEmails = emails.filter(email => {
-    // 1. Search Filter
-    const query = searchQuery.toLowerCase();
-    const matchesSearch = (
-      (email.subject || "").toLowerCase().includes(query) ||
-      (email.from?.name || "").toLowerCase().includes(query) ||
-      (email.from?.email || "").toLowerCase().includes(query) ||
-      (email.body || "").toLowerCase().includes(query)
-    );
-    if (!matchesSearch) return false;
+  const filteredEmails = useMemo(() => emails.filter(email => {
+    // 1. Advanced Search Filters
+    if (advancedSearch.from && !(email.from?.name?.toLowerCase().includes(advancedSearch.from.toLowerCase()) || email.from?.email?.toLowerCase().includes(advancedSearch.from.toLowerCase()))) return false;
+    if (advancedSearch.to && !email.to?.some((t: any) => t.name?.toLowerCase().includes(advancedSearch.to.toLowerCase()) || t.email?.toLowerCase().includes(advancedSearch.to.toLowerCase()))) return false;
+    if (advancedSearch.subject && !(email.subject || "").toLowerCase().includes(advancedSearch.subject.toLowerCase())) return false;
+    if (advancedSearch.body && !(email.body || "").toLowerCase().includes(advancedSearch.body.toLowerCase())) return false;
+    if (advancedSearch.mailboxId !== "all" && !email.mailboxIds?.[advancedSearch.mailboxId]) return false;
+    if (advancedSearch.after && new Date(email.date) < new Date(advancedSearch.after)) return false;
+    if (advancedSearch.before && new Date(email.date) > new Date(advancedSearch.before)) return false;
 
-    // 2. Virtual Folder Segregation
+    // 2. Simple Search Filter
+    const query = searchQuery.toLowerCase();
+    if (query) {
+      const matchesSearch = (
+        (email.subject || "").toLowerCase().includes(query) ||
+        (email.from?.name || "").toLowerCase().includes(query) ||
+        (email.from?.email || "").toLowerCase().includes(query) ||
+        (email.body || "").toLowerCase().includes(query)
+      );
+      if (!matchesSearch) return false;
+    }
+
+    // 3. Virtual Folder Segregation
     const draftsId = mailboxes.find(m => m.role === 'drafts')?.id;
     const isScheduled = !!scheduledJobs[email.id];
 
@@ -1475,10 +1630,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
     
     return true;
-  });
+  }), [emails, advancedSearch, searchQuery, mailboxes, scheduledJobs, selectedMailbox]);
 
   const filteredContacts = contacts.filter(contact => {
-    const query = searchQuery.toLowerCase();
+    if (advancedSearch.name && !getContactName(contact).toLowerCase().includes(advancedSearch.name.toLowerCase())) return false;
+    if (advancedSearch.email && !getContactEmail(contact).toLowerCase().includes(advancedSearch.email.toLowerCase())) return false;
+    if (advancedSearch.organization && !(contact as any).organization?.toLowerCase().includes(advancedSearch.organization.toLowerCase())) return false;
+
+    const query = contactSearchQuery.toLowerCase();
+    if (!query) return true;
     return (
       getContactName(contact).toLowerCase().includes(query) ||
       getContactEmail(contact).toLowerCase().includes(query)
@@ -1530,6 +1690,16 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   }, [events, contacts, calContactBirthday]);
 
   const filteredEvents = allActiveEvents.filter(event => {
+    // Filter hidden calendars
+    const eventCalId = event.calendarId || (event.calendarIds && Object.keys(event.calendarIds)[0]);
+    if (eventCalId && hiddenCalendars.includes(eventCalId)) return false;
+
+    if (advancedSearch.title && !(event.title || "").toLowerCase().includes(advancedSearch.title.toLowerCase())) return false;
+    if (advancedSearch.location && !(event.location || "").toLowerCase().includes(advancedSearch.location.toLowerCase())) return false;
+    if (advancedSearch.body && !(event.description || "").toLowerCase().includes(advancedSearch.body.toLowerCase())) return false;
+    if (advancedSearch.after && new Date(event.start || event.startDate) < new Date(advancedSearch.after)) return false;
+    if (advancedSearch.before && new Date(event.start || event.startDate) > new Date(advancedSearch.before)) return false;
+
     const query = eventSearchQuery.toLowerCase();
     if (!query) return true;
     return (
@@ -1671,12 +1841,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         phoneType: newContact.phoneType,
         organization: newContact.organization.trim(),
         notes: newContact.notes,
-        avatarUrl: newContact.photoUrl
+        avatarUrl: newContact.photoUrl,
+        birthday: newContact.birthday
       });
 
       setContacts(prev => [...prev, createdContact]);
       setIsContactModalOpen(false);
-      setNewContact({ firstName: '', lastName: '', email: '', emailType: 'private', phone: '', phoneType: 'private', organization: '', notes: '', photoUrl: '' });
+      setNewContact({ firstName: '', lastName: '', email: '', emailType: 'private', phone: '', phoneType: 'private', organization: '', notes: '', photoUrl: '', birthday: '' });
       setContactErrors({});
       toast.success("Contact created successfully");
     } catch (error: any) {
@@ -1773,13 +1944,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       if (selectedContact.phones && typeof selectedContact.phones === 'object') {
         phone = (Object.values(selectedContact.phones)[0] as any)?.number || "";
       }
+      
+      let birthday = "";
+      if (selectedContact.anniversaries) {
+        const bd = Object.values(selectedContact.anniversaries).find((a: any) => a.kind === "birth");
+        if (bd) birthday = (bd as any).date;
+      }
+      
       setEditingContactData({
         fullName: getContactName(selectedContact),
         email: email,
         phone: phone,
         organization: (selectedContact.organizations?.[0]?.name || selectedContact.company) || "",
         notes: selectedContact.notes || "",
-        photoUrl: getContactPhoto(selectedContact)
+        photoUrl: getContactPhoto(selectedContact),
+        birthday: birthday
       });
     } else {
       setEditingContactData(null);
@@ -1823,6 +2002,18 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
             ...(selectedContact.photos?.[photoKey] || {}),
              url: editingContactData.photoUrl.trim(),
              kind: "photo"
+          }
+        };
+      }
+      
+      if (editingContactData.birthday) {
+        const birthKey = (selectedContact.anniversaries && typeof selectedContact.anniversaries === 'object' && Object.keys(selectedContact.anniversaries).find((k) => selectedContact.anniversaries[k].kind === "birth")) || "a1";
+        patches.anniversaries = {
+          ...selectedContact.anniversaries,
+          [birthKey]: {
+             ...(selectedContact.anniversaries?.[birthKey] || {}),
+             date: editingContactData.birthday.trim(),
+             kind: "birth"
           }
         };
       }
@@ -2156,6 +2347,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     if (!emailBody && !isSecureMessage) {
       toast.error("Message body cannot be empty");
       return;
+    }
+
+    if (composeAttachmentReminder === 'true' && draftAttachments.length === 0) {
+      const lowerBody = emailBody.toLowerCase();
+      const lowerSub = subject.toLowerCase();
+      if ((lowerBody.includes('attach') || lowerSub.includes('attach')) && 
+          !window.confirm('You mentioned an attachment but there are no files attached. Send anyway?')) {
+        return;
+      }
     }
 
     if (isScheduling && scheduleTime) {
@@ -2786,7 +2986,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     try {
       const client = new JmapClient(credentials);
       // Wait, getEmails supports keyword now. Add it here.
-      const mapped = await client.getEmails(targetMailboxId, 50, 0, tagKeyword || undefined); 
+      const mapped = await client.getEmails(targetMailboxId, readEmailsPerPage, 0, tagKeyword || undefined, !readDisableConvGrouping); 
       
       if (currentUsernameRef.current !== callerUsername) {
         return;
@@ -2824,10 +3024,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     setIsLoadingMore(true);
     try {
       const client = new JmapClient(credentials);
-      const newEmails = await client.getEmails(targetMailboxId || null, 50, emails.length, selectedTagId || undefined);
+      const newEmails = await client.getEmails(targetMailboxId || null, readEmailsPerPage, emails.length, selectedTagId || undefined, !readDisableConvGrouping);
       if (newEmails.length > 0) {
         setEmails(prev => [...prev, ...newEmails]);
-        setHasMoreEmails(newEmails.length === 50);
+        setHasMoreEmails(newEmails.length === readEmailsPerPage);
       } else {
         setHasMoreEmails(false);
       }
@@ -3058,7 +3258,17 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       // Remove from local list
       setEmails(prev => prev.filter(e => e.id !== emailId));
       if (selectedEmail?.id === emailId) {
-        setSelectedEmail(null);
+         if (readNextOnDelete === 'true' || readNextOnDelete === true as any) {
+            const idx = filteredEmails.findIndex(e => e.id === emailId);
+            if (idx !== -1) {
+              const nextEmail = filteredEmails[idx + 1] || filteredEmails[idx - 1];
+              setSelectedEmail(nextEmail || null);
+            } else {
+              setSelectedEmail(null);
+            }
+         } else {
+           setSelectedEmail(null);
+         }
       }
       toast.success(`Moved to ${targetMailbox.name}`);
       
@@ -3090,7 +3300,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     const trashMailbox = mailboxes.find(m => m.role === 'trash');
     const currentMailbox = mailboxes.find(m => m.id === selectedMailbox);
     
-    if (currentMailbox?.role === 'trash') {
+    if (currentMailbox?.role === 'trash' || readDeleteAction === 'permanent' || (currentMailbox?.role === 'junk' && readPermanentDeleteJunk)) {
       // Permanent delete
       if (!credentials) return;
       const client = new JmapClient(credentials);
@@ -3102,7 +3312,19 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           }, "0"]
         ]);
         setEmails(prev => prev.filter(e => e.id !== emailId));
-        if (selectedEmail?.id === emailId) setSelectedEmail(null);
+        if (selectedEmail?.id === emailId) {
+           if (readNextOnDelete === 'true' || readNextOnDelete === true as any) {
+              const idx = filteredEmails.findIndex(e => e.id === emailId);
+              if (idx !== -1) {
+                const nextEmail = filteredEmails[idx + 1] || filteredEmails[idx - 1];
+                setSelectedEmail(nextEmail || null);
+              } else {
+                setSelectedEmail(null);
+              }
+           } else {
+             setSelectedEmail(null);
+           }
+        }
         toast.success("Permanently deleted");
       } catch (err) {
         toast.error("Failed to delete email");
@@ -3112,7 +3334,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
   };
 
-  const handleArchiveEmail = (email: Email) => handleMoveEmail(email.id, 'archive', email);
+  const handleArchiveEmail = (email: Email) => {
+     let target = 'archive';
+     if (readArchiveMode === 'year') {
+         target = `Archive ${new Date().getFullYear()}`;
+     } else if (readArchiveMode === 'month') {
+         target = `Archive ${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+     }
+     handleMoveEmail(email.id, target, email);
+  };
   const handleToggleStar = (email: Email) => handleUpdateEmailKeywords(email.id, { "$flagged": !email.starred });
   const handleBulkUpdateEmailKeywords = async (emailIds: string[], keywords: Record<string, boolean | null>) => {
     if (!credentials || emailIds.length === 0) return;
@@ -3163,10 +3393,17 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
   const handleBulkMoveEmail = async (emailIds: string[], targetMailboxRole: string) => {
     if (!credentials || emailIds.length === 0) return;
-    const targetMailbox = mailboxes.find(m => m.role === targetMailboxRole) || mailboxes.find(m => m.name.toLowerCase().includes(targetMailboxRole));
+    let targetMailbox = mailboxes.find(m => m.role === targetMailboxRole) || mailboxes.find(m => m.name.toLowerCase().includes(targetMailboxRole.toLowerCase()));
+    
     if (!targetMailbox) {
-      toast.error(`Target mailbox ${targetMailboxRole} not found`);
-      return;
+      const mbId = await ensureCustomMailbox(targetMailboxRole);
+      if (mbId) {
+        targetMailbox = mailboxes.find(m => m.id === mbId) || { id: mbId, name: targetMailboxRole, role: '' } as any;
+      }
+      if (!targetMailbox) {
+        toast.error(`Target mailbox ${targetMailboxRole} not found`);
+        return;
+      }
     }
 
     const client = new JmapClient(credentials);
@@ -3186,7 +3423,25 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       // Remove from local list
       setEmails(prev => prev.filter(e => !emailIds.includes(e.id)));
       if (selectedEmail && emailIds.includes(selectedEmail.id)) {
-        setSelectedEmail(null);
+         if (readNextOnDelete === 'true' || readNextOnDelete === true as any) {
+           const idx = filteredEmails.findIndex(e => e.id === selectedEmail.id);
+           if (idx !== -1) {
+              let nextEmail = null;
+              for (let i = idx + 1; i < filteredEmails.length; i++) {
+                 if (!emailIds.includes(filteredEmails[i].id)) { nextEmail = filteredEmails[i]; break; }
+              }
+              if (!nextEmail) {
+                 for (let i = idx - 1; i >= 0; i--) {
+                    if (!emailIds.includes(filteredEmails[i].id)) { nextEmail = filteredEmails[i]; break; }
+                 }
+              }
+              setSelectedEmail(nextEmail);
+           } else {
+              setSelectedEmail(null);
+           }
+         } else {
+           setSelectedEmail(null);
+         }
       }
       setSelectedEmailIds([]);
       toast.success(`Moved ${emailIds.length} messages to ${targetMailbox.name}`);
@@ -3199,7 +3454,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
   const handleBulkDelete = async (emailIds: string[]) => {
     const currentMailbox = mailboxes.find(m => m.id === selectedMailbox);
-    if (currentMailbox?.role === 'trash') {
+    if (currentMailbox?.role === 'trash' || readDeleteAction === 'permanent') {
       if (!credentials) return;
       const client = new JmapClient(credentials);
       try {
@@ -3211,7 +3466,26 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         ]);
         setEmails(prev => prev.filter(e => !emailIds.includes(e.id)));
         if (selectedEmail && emailIds.includes(selectedEmail.id)) {
-          setSelectedEmail(null);
+           if (readNextOnDelete === 'true' || readNextOnDelete === true as any) {
+             const idx = filteredEmails.findIndex(e => e.id === selectedEmail.id);
+             if (idx !== -1) {
+                // Find next one that is NOT in emailIds
+                let nextEmail = null;
+                for (let i = idx + 1; i < filteredEmails.length; i++) {
+                   if (!emailIds.includes(filteredEmails[i].id)) { nextEmail = filteredEmails[i]; break; }
+                }
+                if (!nextEmail) {
+                   for (let i = idx - 1; i >= 0; i--) {
+                      if (!emailIds.includes(filteredEmails[i].id)) { nextEmail = filteredEmails[i]; break; }
+                   }
+                }
+                setSelectedEmail(nextEmail);
+             } else {
+                setSelectedEmail(null);
+             }
+           } else {
+             setSelectedEmail(null);
+           }
         }
         setSelectedEmailIds([]);
         toast.success(`Permanently deleted ${emailIds.length} messages`);
@@ -3663,23 +3937,201 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   else if (activeApp === 'calendar') setEventSearchQuery(val);
                   else setSearchQuery(val);
                 }}
-                className="w-full pl-11 pr-12 py-2.5 bg-slate-100 dark:bg-slate-900 border border-transparent dark:border-slate-800 focus:bg-white dark:focus:bg-slate-800 focus:border-transparent focus:ring-4 focus:ring-indigo-500/10 dark:focus:ring-indigo-500/20 rounded-full text-base outline-none transition-all dark:text-white shadow-sm"
+                className="w-full pl-11 pr-20 py-2.5 bg-slate-100 dark:bg-slate-900 border border-transparent dark:border-slate-800 focus:bg-white dark:focus:bg-slate-800 focus:border-transparent focus:ring-4 focus:ring-indigo-500/10 dark:focus:ring-indigo-500/20 rounded-full text-base outline-none transition-all dark:text-white shadow-sm"
               />
-              {(activeApp === 'contacts' ? contactSearchQuery : activeApp === 'calendar' ? eventSearchQuery : searchQuery) && (
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center pr-1">
+                {(activeApp === 'contacts' ? contactSearchQuery : activeApp === 'calendar' ? eventSearchQuery : searchQuery) && (
+                  <button 
+                    onClick={() => {
+                      if (activeApp === 'contacts') setContactSearchQuery("");
+                      else if (activeApp === 'calendar') setEventSearchQuery("");
+                      else setSearchQuery("");
+                    }}
+                    className={cn("p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors mr-1")}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
                 <button 
-                  onClick={() => {
-                    if (activeApp === 'contacts') setContactSearchQuery("");
-                    else if (activeApp === 'calendar') setEventSearchQuery("");
-                    else setSearchQuery("");
-                  }}
-                  className="absolute right-12 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors"
+                  onClick={() => setIsAdvancedSearchOpen(!isAdvancedSearchOpen)} 
+                  className={cn("p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-md transition-colors", isAdvancedSearchOpen && "bg-slate-200 dark:bg-slate-700")}
+                  title="Advanced Search"
                 >
-                  <X className="w-4 h-4" />
+                  <Filter className="w-4 h-4" />
                 </button>
-              )}
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2 pointer-events-none">
-                <Sparkles className="w-5 h-5 text-indigo-500" />
               </div>
+
+              {isAdvancedSearchOpen && (
+                <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-[#11131f] border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl p-4 z-50 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Advanced Search</h3>
+                    <button onClick={() => {
+                       setAdvancedSearch({ from: "", to: "", subject: "", body: "", mailboxId: "all", after: "", before: "", title: "", location: "", name: "", email: "", organization: "" });
+                    }} className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 flex items-center gap-1">
+                      <RefreshCw className="w-3 h-3" /> Clear
+                    </button>
+                  </div>
+
+                  {activeApp === 'mail' && (
+                    <>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-400">From</label>
+                          <input 
+                            type="text" 
+                            value={advancedSearch.from}
+                            onChange={e => setAdvancedSearch({...advancedSearch, from: e.target.value})}
+                            placeholder="Sender email or name"
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-400">To</label>
+                          <input 
+                            type="text" 
+                            value={advancedSearch.to}
+                            onChange={e => setAdvancedSearch({...advancedSearch, to: e.target.value})}
+                            placeholder="Recipient email or name"
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 mb-4">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Subject</label>
+                          <input 
+                            type="text" 
+                            value={advancedSearch.subject}
+                            onChange={e => setAdvancedSearch({...advancedSearch, subject: e.target.value})}
+                            placeholder="Subject contains..."
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Body</label>
+                          <input 
+                            type="text" 
+                            value={advancedSearch.body}
+                            onChange={e => setAdvancedSearch({...advancedSearch, body: e.target.value})}
+                            placeholder="Body contains..."
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 mb-4">
+                        <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Folder</label>
+                        <select 
+                          value={advancedSearch.mailboxId}
+                          onChange={e => setAdvancedSearch({...advancedSearch, mailboxId: e.target.value})}
+                          className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                        >
+                          <option value="all">All folders</option>
+                          {mailboxes.filter(m => m.role !== 'drafts' && m.role !== 'trash').map(m => (
+                            <option key={m.id} value={m.id}>{m.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
+                  )}
+
+                  {activeApp === 'contacts' && (
+                    <>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Name</label>
+                          <input 
+                            type="text" 
+                            value={advancedSearch.name}
+                            onChange={e => setAdvancedSearch({...advancedSearch, name: e.target.value})}
+                            placeholder="Contact name..."
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Email</label>
+                          <input 
+                            type="text" 
+                            value={advancedSearch.email}
+                            onChange={e => setAdvancedSearch({...advancedSearch, email: e.target.value})}
+                            placeholder="Email address..."
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5 mb-4">
+                        <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Organization</label>
+                        <input 
+                          type="text" 
+                          value={advancedSearch.organization}
+                          onChange={e => setAdvancedSearch({...advancedSearch, organization: e.target.value})}
+                          placeholder="Company or organization..."
+                          className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {activeApp === 'calendar' && (
+                    <>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Title</label>
+                          <input 
+                            type="text" 
+                            value={advancedSearch.title}
+                            onChange={e => setAdvancedSearch({...advancedSearch, title: e.target.value})}
+                            placeholder="Event title..."
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Location</label>
+                          <input 
+                            type="text" 
+                            value={advancedSearch.location}
+                            onChange={e => setAdvancedSearch({...advancedSearch, location: e.target.value})}
+                            placeholder="Location..."
+                            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5 mb-4">
+                        <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Description</label>
+                        <input 
+                          type="text" 
+                          value={advancedSearch.body}
+                          onChange={e => setAdvancedSearch({...advancedSearch, body: e.target.value})}
+                          placeholder="Event description..."
+                          className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-slate-600 dark:text-slate-400">After</label>
+                      <input 
+                        type="date"
+                        value={advancedSearch.after}
+                        onChange={e => setAdvancedSearch({...advancedSearch, after: e.target.value})}
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Before</label>
+                      <input 
+                        type="date"
+                        value={advancedSearch.before}
+                        onChange={e => setAdvancedSearch({...advancedSearch, before: e.target.value})}
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm outline-none focus:border-indigo-500 dark:text-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
             <div className="flex items-center gap-2 relative">
@@ -3776,8 +4228,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               {/* Email List */}
               <div
                 className={cn(
-                  "w-full md:w-[350px] lg:w-[420px] border-r border-slate-200 dark:border-slate-800 flex flex-col bg-white dark:bg-[#050505] shrink-0 overflow-hidden",
-                  selectedEmail ? "hidden md:flex" : "flex"
+                  "border-slate-200 dark:border-slate-800 flex flex-col bg-white dark:bg-[#050505] shrink-0 overflow-hidden transition-all duration-300",
+                  readDisplayMode === 'floating' 
+                    ? "w-full border-r-0"
+                    : "w-full md:w-[350px] lg:w-[420px] border-r",
+                  selectedEmail && readDisplayMode !== 'floating' ? "hidden md:flex" : "flex"
                 )}
               >
                 <div 
@@ -3826,7 +4281,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             <Shield className="w-4 h-4" />
                           </button>
                           <button 
-                            onClick={() => handleBulkMoveEmail(selectedEmailIds, 'archive')}
+                            onClick={() => {
+                               let target = 'archive';
+                               if (readArchiveMode === 'year') {
+                                   target = `Archive ${new Date().getFullYear()}`;
+                               } else if (readArchiveMode === 'month') {
+                                   target = `Archive ${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+                               }
+                               handleBulkMoveEmail(selectedEmailIds, target);
+                            }}
                             className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
                             title="Archive"
                           >
@@ -3989,22 +4452,56 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                       </span>
                                     </div>
                                   )}
-                                  <div className="flex items-center gap-2 ml-auto">
+                                  <div className="flex items-center gap-2 ml-auto relative">
                                     {allTags.filter(tag => email.keywords?.[tag.keyword]).map(tag => (
                                       <div key={tag.keyword} className={`w-3 h-3 rounded-full flex items-center justify-center shrink-0 ${tag.color} text-white font-bold text-[8px] opacity-80`} style={{ backgroundColor: tag.color.startsWith('#') ? tag.color : undefined }} title={tag.keyword}>
                                         {tag.name}
                                       </div>
                                     ))}
-                                    <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap mt-0.5 font-medium">
+                                    <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap mt-0.5 font-medium group-hover:opacity-0 transition-opacity">
                                       {formatDistanceToNow(new Date(email.date), { addSuffix: true })}
                                     </span>
+                                      
+                                    <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-all flex items-center bg-white dark:bg-[#050505] shadow-sm rounded-lg border border-slate-200 dark:border-slate-800 p-0.5 translate-x-2 group-hover:translate-x-0 z-10 hidden sm:flex">
+                                      {readQuickHoverActions.includes('delete') && (
+                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteEmail(email.id); }} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 rounded-md transition-colors text-slate-400" title="Delete">
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                      {readQuickHoverActions.includes('star_unstar') && (
+                                        <button onClick={(e) => { e.stopPropagation(); handleToggleStar(email); }} className="p-1.5 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 hover:text-yellow-600 dark:hover:text-yellow-400 rounded-md transition-colors text-slate-400" title={email.starred ? "Unstar" : "Star"}>
+                                          <Star className={cn("w-3.5 h-3.5", email.starred ? "fill-yellow-400 text-yellow-400" : "")} />
+                                        </button>
+                                      )}
+                                      {readQuickHoverActions.includes('archive') && (
+                                        <button onClick={(e) => { e.stopPropagation(); handleArchiveEmail(email); }} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-300 rounded-md transition-colors text-slate-400" title="Archive">
+                                          <Archive className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                      {readQuickHoverActions.includes('mark_read_unread') && (
+                                        <button onClick={(e) => { e.stopPropagation(); email.read ? handleMarkAsUnread(email.id) : handleMarkAsRead(email.id); }} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-300 rounded-md transition-colors text-slate-400" title={email.read ? "Mark as unread" : "Mark as read"}>
+                                          {email.read ? <Mail className="w-3.5 h-3.5" /> : <MailCheck className="w-3.5 h-3.5" />}
+                                        </button>
+                                      )}
+                                      {readQuickHoverActions.includes('tag') && (
+                                        <button onClick={(e) => { e.stopPropagation(); setContextMenuEmail(contextMenuEmail?.id === email.id ? null : email); }} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-300 rounded-md transition-colors text-slate-400" title="Tag">
+                                          <Tag className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                      {readQuickHoverActions.includes('mark_as_spam') && (
+                                        <button onClick={(e) => { e.stopPropagation(); handleMoveToJunk(email); }} className="p-1.5 hover:bg-orange-50 dark:hover:bg-orange-900/20 hover:text-orange-600 dark:hover:text-orange-400 rounded-md transition-colors text-slate-400" title="Mark as Spam">
+                                          <AlertCircle className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
+
                                     <div className="relative group/more">
                                       <button 
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setContextMenuEmail(contextMenuEmail?.id === email.id ? null : email);
                                         }}
-                                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors"
+                                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors sm:opacity-0 sm:group-hover:opacity-100 opacity-100"
                                       >
                                         <MoreVertical className="w-4 h-4 text-slate-400" />
                                       </button>
@@ -4076,9 +4573,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                     </div>
                                   </div>
                                 )}
-                                <div className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed break-words font-normal">
-                                  {email.preview}
-                                </div>
+                                {readShowPreviewText && (
+                                  <div className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed break-words font-normal">
+                                    {email.preview}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </li>
@@ -4098,8 +4597,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               {/* Email Viewer */}
               <div
                 className={cn(
-                  "flex-1 flex flex-col bg-white dark:bg-[#050505] min-w-0",
-                  !selectedEmail ? "hidden md:flex" : "flex"
+                  "flex flex-col min-w-0",
+                  !selectedEmail && readDisplayMode !== 'floating' ? "hidden md:flex" : "",
+                  !selectedEmail && readDisplayMode === 'floating' ? "hidden" : "",
+                  selectedEmail && readDisplayMode !== 'floating' ? "flex" : "",
+                  readDisplayMode === 'floating' && selectedEmail
+                    ? "fixed right-4 top-[80px] bottom-4 w-[600px] max-w-[calc(100vw-32px)] z-40 rounded-2xl shadow-2xl shadow-black/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#050505] overflow-hidden"
+                    : "flex-1 bg-white dark:bg-[#050505]"
                 )}
               >
                 {selectedEmail ? (
@@ -4108,10 +4612,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     <div className="h-14 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 shrink-0 bg-white dark:bg-[#050505]">
                       <div className="flex items-center gap-1">
                         <button 
-                          className="md:hidden p-2 -ml-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg mr-2 transition-colors"
+                          className={cn("p-2 -ml-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg mr-2 transition-colors", readDisplayMode === 'floating' ? "flex" : "md:hidden")}
                           onClick={() => setSelectedEmail(null)}
                         >
-                          <ChevronDown className="w-5 h-5 rotate-90" />
+                          {readDisplayMode === 'floating' ? <X className="w-5 h-5" /> : <ChevronDown className="w-5 h-5 rotate-90" />}
                         </button>
                         <button 
                           onClick={() => mailboxes.find(m => m.id === selectedMailbox)?.role !== 'inbox' ? handleMoveToInbox(selectedEmail) : handleArchiveEmail(selectedEmail)}
@@ -4409,6 +4913,31 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           </div>
                         </div>
 
+                        {readAttachmentPosition === 'below_header' && (() => {
+                          const displayAttachments = readHideInlineImages && selectedEmail.attachments
+                            ? selectedEmail.attachments.filter((a: any) => !a.cid && !a.contentId && !a.isInline)
+                            : selectedEmail.attachments;
+                          
+                          if (!displayAttachments || displayAttachments.length === 0) return null;
+                          return (
+                            <div className="mb-8 bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
+                                Attachments ({displayAttachments.length})
+                              </h3>
+                              <div className="flex flex-wrap gap-4">
+                                {displayAttachments.map((att: any, idx: number) => (
+                                  <AttachmentRenderer 
+                                    key={idx} 
+                                    attachment={att} 
+                                    credentials={credentials} 
+                                    language={language}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
                         <div className="mt-8 overflow-x-auto max-w-none">
                           <HtmlEmailViewer 
   htmlContent={DOMPurify.sanitize(selectedEmail.body || "<em>No content</em>", { WHOLE_DOCUMENT: true, ADD_TAGS: ['style', 'head', 'html', 'meta', 'title', 'body'], ADD_ATTR: ['target', 'style', 'class'] })} 
@@ -4418,22 +4947,29 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 />
                         </div>
 
-                        {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
-                          <div className="mt-8">
-                            <hr className="my-6 border-slate-200 dark:border-slate-800" />
-                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Attachments ({selectedEmail.attachments.length})</h3>
-                            <div className="flex flex-wrap gap-4">
-                              {selectedEmail.attachments.map((att: any, idx: number) => (
-                                <AttachmentRenderer 
-                                  key={idx} 
-                                  attachment={att} 
-                                  credentials={credentials} 
-                                  language={language}
-                                />
-                              ))}
+                        {readAttachmentPosition !== 'below_header' && (() => {
+                          const displayAttachments = readHideInlineImages && selectedEmail.attachments
+                            ? selectedEmail.attachments.filter((a: any) => !a.cid && !a.contentId && !a.isInline)
+                            : selectedEmail.attachments;
+
+                          if (!displayAttachments || displayAttachments.length === 0) return null;
+                          return (
+                            <div className="mt-8">
+                              <hr className="my-6 border-slate-200 dark:border-slate-800" />
+                              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Attachments ({displayAttachments.length})</h3>
+                              <div className="flex flex-wrap gap-4">
+                                {displayAttachments.map((att: any, idx: number) => (
+                                  <AttachmentRenderer 
+                                    key={idx} 
+                                    attachment={att} 
+                                    credentials={credentials} 
+                                    language={language}
+                                  />
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     </div>
                     
@@ -4446,6 +4982,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             setToAddresses([email.from.email]);
                             setSubject(`Re: ${email.subject}`);
                             setEmailBody(`\n\nOn ${format(new Date(email.date), 'MMM d, yyyy')} at ${format(new Date(email.date), 'h:mm a')}, ${email.from.name || email.from.email} wrote:\n> ${email.preview}...`);
+                            if (composeAutoSelectIdentity === 'true') {
+                               const toEmails = email.to.map((t: any) => t.email.toLowerCase());
+                               const matchedIdentity = identities.find(i => toEmails.includes(i.email.toLowerCase()));
+                               if (matchedIdentity) setSelectedIdentityId(matchedIdentity.id);
+                            }
                             setIsComposeOpen(true);
                           }
                         }}
@@ -4460,6 +5001,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             setToAddresses([]);
                             setSubject(`Fwd: ${email.subject}`);
                             setEmailBody(`\n\n---------- Forwarded message ---------\nFrom: ${email.from.name || email.from.email} <${email.from.email}>\nDate: ${format(new Date(email.date), 'MMM d, yyyy')} at ${format(new Date(email.date), 'h:mm a')}\nSubject: ${email.subject}\nTo: ${email.to.map(t => t.email).join(', ')}\n\n${email.body}`);
+                            if (composeAutoSelectIdentity === 'true') {
+                               const toEmails = email.to.map((t: any) => t.email.toLowerCase());
+                               const matchedIdentity = identities.find(i => toEmails.includes(i.email.toLowerCase()));
+                               if (matchedIdentity) setSelectedIdentityId(matchedIdentity.id);
+                            }
                             setIsComposeOpen(true);
                           }
                         }}
@@ -4753,13 +5299,17 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       </button>
                     </h3>
                     <div className="space-y-0.5">
-                      {(calendars || []).filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).map((calendar, idx) => (
-                        <div key={idx} className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors">
-                          <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-transform group-active:scale-90" style={{ backgroundColor: calendar.color || '#9333ea' }}>
+                      {(calendars || []).filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).map((calendar, idx) => {
+                        const isHidden = hiddenCalendars.includes(calendar.id);
+                        return (
+                          <div key={idx} onClick={() => setHiddenCalendars(prev => isHidden ? prev.filter(id => id !== calendar.id) : [...prev, calendar.id])} className={cn("flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors", isHidden ? "opacity-50" : "")}>
+                            <div className="w-4 h-4 rounded-md flex items-center justify-center shrink-0 transition-transform group-active:scale-90" style={{ backgroundColor: isHidden ? 'transparent' : (calendar.color || '#9333ea'), border: `2px solid ${calendar.color || '#9333ea'}` }}>
+                              {!isHidden && <Check className="w-3 h-3 text-white" />}
+                            </div>
+                            <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate tracking-wide">{calendar.name || "Calendar"}</span>
                           </div>
-                          <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate tracking-wide">{calendar.name || "Calendar"}</span>
-                        </div>
-                      ))}
+                        );
+                      })}
                       {calContactBirthday && (
                         <div className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors">
                           <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-transform group-active:scale-90 bg-yellow-500">
@@ -4794,13 +5344,17 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       Subscriptions
                     </h3>
                     <div className="space-y-0.5">
-                      {icalSubscriptions.map((sub, idx) => (
-                        <div key={idx} className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors">
-                          <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-transform group-active:scale-90" style={{ backgroundColor: sub.color || '#f97316' }}>
+                      {icalSubscriptions.map((sub, idx) => {
+                        const isHidden = hiddenCalendars.includes(sub.calendarId);
+                        return (
+                          <div key={idx} onClick={() => setHiddenCalendars(prev => isHidden ? prev.filter(id => id !== sub.calendarId) : [...prev, sub.calendarId])} className={cn("flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors", isHidden ? "opacity-50" : "")}>
+                            <div className="w-4 h-4 rounded-md flex items-center justify-center shrink-0 transition-transform group-active:scale-90" style={{ backgroundColor: isHidden ? 'transparent' : (sub.color || '#f97316'), border: `2px solid ${sub.color || '#f97316'}` }}>
+                              {!isHidden && <Check className="w-3 h-3 text-white" />}
+                            </div>
+                            <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate tracking-wide opacity-80">{sub.name}</span>
                           </div>
-                          <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate tracking-wide opacity-80">{sub.name}</span>
-                        </div>
-                      ))}
+                        );
+                      })}
                       {icalSubscriptions.length === 0 && (
                         <div className="px-2 py-1 text-xs text-slate-500">No subscriptions</div>
                       )}
@@ -4899,11 +5453,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   </div>
                 </div>
                 
-                <div className="flex-1 overflow-y-auto p-2 md:p-6 custom-scrollbar bg-slate-50/80 dark:bg-[#050505]">
-                  <div className="bg-white dark:bg-[#0d0e15] rounded-3xl border border-slate-200/60 dark:border-slate-800/60 shadow-sm flex flex-col min-h-full h-fit">
+                <div className="flex-1 flex flex-col min-h-0 p-2 md:p-6 bg-slate-50/80 dark:bg-[#050505]">
+                  <div className="bg-white dark:bg-[#0d0e15] rounded-3xl border border-slate-200/60 dark:border-slate-800/60 shadow-sm flex flex-col flex-1 min-h-0 overflow-hidden">
                     
                     {calendarView === 'month' && (
-                      <>
+                      <div className="flex flex-col flex-1 min-h-0">
                         <div className="grid grid-cols-7 border-b border-slate-200/60 dark:border-slate-800/60 bg-slate-50/30 dark:bg-black/20 shrink-0">
                           {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, i) => {
                             const showDay = calWeekStartsOn === 'Monday' ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i] : day;
@@ -4918,7 +5472,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             );
                           })}
                         </div>
-                        <div className="flex-1 grid grid-cols-7 bg-slate-200/40 dark:bg-slate-800/40 gap-px border-b border-transparent" style={{ gridTemplateRows: `repeat(${Math.ceil((new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1).getDay() + (calWeekStartsOn === 'Monday' && new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1).getDay() === 0 ? 6 : calWeekStartsOn === 'Monday' ? -1 : 0) + new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 0).getDate()) / 7)}, minmax(0, 1fr))` }}>
+                        <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
+                          <div className="grid grid-cols-7 bg-slate-200/40 dark:bg-slate-800/40 gap-px border-b border-transparent min-h-full" style={{ gridTemplateRows: `repeat(${Math.ceil((new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1).getDay() + (calWeekStartsOn === 'Monday' && new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1).getDay() === 0 ? 6 : calWeekStartsOn === 'Monday' ? -1 : 0) + new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 0).getDate()) / 7)}, minmax(120px, 1fr))` }}>
                           {(() => {
                             const startOfMonth = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1);
                             let startDay = startOfMonth.getDay();
@@ -4969,228 +5524,270 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                     </span>
                                   </div>
                                   
-                                  <div className="flex-1 space-y-1 overflow-y-auto no-scrollbar">
-                                    {dayEvents.slice(0, 2).map((event, idx) => (
-                                      <div 
-                                        key={idx} 
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setSelectedEvent(event);
-                                        }}
-                                        className="px-2 py-1 bg-indigo-50/80 dark:bg-indigo-500/10 border-l-[3px] border-indigo-500 rounded-r text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 truncate transition-all hover:bg-indigo-100 dark:hover:bg-indigo-500/20 shadow-sm"
-                                        title={calEventHoverPreview === 'None' ? undefined : event.title}
-                                      >
-                                        {calShowTimeInMonth && !event.isAllDay && format(new Date(event.start || event.startDate), calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')} {event.title}
-                                      </div>
-                                    ))}
-                                    {dayEvents.length > 2 && (
-                                      <div className="px-2 py-0.5 text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                                        +{dayEvents.length - 2} more
-                                      </div>
-                                    )}
-                                  </div>
+                                  {calCompactMonthView ? (
+                                    <div className="flex flex-wrap items-center justify-start gap-1.5 p-1 mt-1 overflow-hidden">
+                                      {dayEvents.map((event: any, eIdx: number) => {
+                                        const cal = calendars.find((c: any) => c.id === (event.calendarId || (event.calendarIds && Object.keys(event.calendarIds)[0])) && c._accountId === event._accountId);
+                                        const isExt = icalSubscriptions.some(sub => sub.calendarId === event.calendarId);
+                                        const calColor = isExt ? (icalSubscriptions.find(s => s.calendarId === event.calendarId)?.color || '#22c55e') : (cal?._color || cal?.color || '#6366f1');
+                                        return (
+                                          <div key={`${event.id}-${eIdx}`} className="w-2.5 h-2.5 rounded-full shadow-sm cursor-pointer hover:scale-125 transition-transform" style={{backgroundColor: calColor}} title={event.title} onClick={(e) => { e.stopPropagation(); setSelectedEvent(event); }} />
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <div className="flex-1 space-y-1 overflow-y-auto no-scrollbar">
+                                      {dayEvents.slice(0, 4).map((event, idx) => {
+                                        const cal = calendars.find((c: any) => c.id === (event.calendarId || (event.calendarIds && Object.keys(event.calendarIds)[0])) && c._accountId === event._accountId);
+                                        const isExt = icalSubscriptions.some(sub => sub.calendarId === event.calendarId);
+                                        const calColor = isExt ? (icalSubscriptions.find(s => s.calendarId === event.calendarId)?.color || '#22c55e') : (cal?._color || cal?.color || '#6366f1');
+                                        return (
+                                          <div 
+                                            key={idx} 
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedEvent(event);
+                                            }}
+                                            className="px-2 py-1 bg-indigo-50/80 dark:bg-indigo-500/10 border-l-[3px] rounded-r text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 truncate transition-all hover:bg-slate-100 dark:hover:bg-slate-800 shadow-sm"
+                                            title={calEventHoverPreview === 'None' ? undefined : event.title}
+                                            style={{ borderLeftColor: calColor }}
+                                          >
+                                            {calShowTimeInMonth && !event.isAllDay && !event.showWithoutTime && format(new Date(event.start || event.startDate), calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')} {event.title}
+                                          </div>
+                                        );
+                                      })}
+                                      {dayEvents.length > 4 && (
+                                        <div className="px-2 py-0.5 text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                                          +{dayEvents.length - 4} more
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             });
                           })()}
                         </div>
-                      </>
-                    )}
+                      </div>
+                    </div>
+                  )}
 
-                    {calendarView === 'week' && (
-                      <div className="flex flex-col flex-1 h-full min-h-0">
-                        <div className="grid grid-cols-8 border-b border-slate-200/60 dark:border-slate-800/60 bg-slate-50/30 dark:bg-black/20 shrink-0">
-                          <div className="border-r border-slate-200/60 dark:border-slate-800/60 p-2 flex items-center justify-center">
-                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Time</span>
-                          </div>
-                          {Array.from({ length: 7 }).map((_, i) => {
-                            const date = new Date(currentCalendarDate);
-                            const startOfWeek = date.getDate() - date.getDay();
-                            date.setDate(startOfWeek + i);
-                            const isToday = date.getDate() === new Date().getDate() && date.getMonth() === new Date().getMonth() && date.getFullYear() === new Date().getFullYear();
-                            
-                            return (
-                              <div key={i} className="py-2 flex flex-col items-center justify-center border-r border-slate-200/60 dark:border-slate-800/60 last:border-0">
-                                <span className={cn("text-xs font-bold uppercase tracking-wider mb-1", isToday ? "text-indigo-600 dark:text-indigo-400" : "text-slate-500")}>
-                                  {format(date, 'eee')}
-                                </span>
-                                <span className={cn("text-lg font-bold w-8 h-8 flex items-center justify-center rounded-full", isToday ? "bg-indigo-600 text-white" : "text-slate-800 dark:text-white")}>
-                                  {date.getDate()}
-                                </span>
+                  {calendarView === 'week' && (
+                      <div className="flex-1 overflow-auto custom-scrollbar relative bg-white dark:bg-[#0d0e15] min-h-0">
+                        <div className="min-w-[1000px] flex flex-col relative">
+                          <div className="flex flex-col sticky top-0 z-50 bg-white dark:bg-[#0d0e15] shadow-sm">
+                            <div className="flex border-b border-slate-200/60 dark:border-slate-800/60 bg-slate-50/90 dark:bg-[#0d0e15]/90 backdrop-blur-md shrink-0">
+                              <div className="w-[80px] border-r border-slate-200/60 dark:border-slate-800/60 p-2 flex items-center justify-center sticky left-0 bg-slate-50/90 dark:bg-[#0d0e15]/90 z-50 backdrop-blur-md shrink-0">
+                                <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider">Time</span>
                               </div>
-                            );
-                          })}
-                        </div>
-                        <div className="flex-1 flex flex-col min-h-0">
-                          {(() => {
-                            // Extract all day events for the current week
-                            const allDayWeekEvents = Array.from({ length: 7 }).map((_, dayIndex) => {
-                              const date = new Date(currentCalendarDate);
-                              const startOfWeek = date.getDate() - date.getDay();
-                              date.setDate(startOfWeek + dayIndex);
-                              
-                              return filteredEvents.filter(e => {
-                                const eventDate = new Date(e.start || e.startDate);
-                                return e.showWithoutTime && eventDate.getDate() === date.getDate() && eventDate.getMonth() === date.getMonth() && eventDate.getFullYear() === date.getFullYear();
-                              });
-                            });
+                              <div className="flex-1 flex">
+                                {Array.from({ length: 7 }).map((_, i) => {
+                                  const date = new Date(currentCalendarDate);
+                                  const startOfWeek = date.getDate() - date.getDay();
+                                  date.setDate(startOfWeek + i);
+                                  const isToday = date.getDate() === new Date().getDate() && date.getMonth() === new Date().getMonth() && date.getFullYear() === new Date().getFullYear();
+                                  
+                                  return (
+                                    <div key={i} className="flex-1 py-2 flex flex-col items-center justify-center border-r border-slate-200/60 dark:border-slate-800/60 last:border-0">
+                                      <span className={cn("text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1", isToday ? "text-indigo-600 dark:text-indigo-400" : "text-slate-500")}>
+                                        {format(date, 'eee')}
+                                      </span>
+                                      <span className={cn("text-sm sm:text-lg font-bold w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center rounded-full", isToday ? "bg-indigo-600 text-white" : "text-slate-800 dark:text-white")}>
+                                        {date.getDate()}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
                             
-                            const hasAnyAllDayEvents = allDayWeekEvents.some(events => events.length > 0);
+                            {(() => {
+                              // Extract all day events for the current week
+                              const allDayWeekEvents = Array.from({ length: 7 }).map((_, dayIndex) => {
+                                const date = new Date(currentCalendarDate);
+                                const startOfWeek = date.getDate() - date.getDay();
+                                date.setDate(startOfWeek + dayIndex);
+                                
+                                return filteredEvents.filter(e => {
+                                  const eventDate = new Date(e.start || e.startDate);
+                                  return e.showWithoutTime && eventDate.getDate() === date.getDate() && eventDate.getMonth() === date.getMonth() && eventDate.getFullYear() === date.getFullYear();
+                                });
+                              });
+                              
+                              const hasAnyAllDayEvents = allDayWeekEvents.some(events => events.length > 0);
 
-                            return (
-                              <>
-                                {hasAnyAllDayEvents && (
-                                  <div className="flex border-b border-slate-200/60 dark:border-slate-800/60 bg-white dark:bg-[#0d0e15] shrink-0 min-h-0">
-                                    <div className="w-1/8 flex flex-col justify-center items-center border-r border-slate-200/60 dark:border-slate-800/60 shrink-0 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider py-2" style={{ width: '12.5%' }}>
-                                      All day
-                                    </div>
-                                    <div className="w-7/8 flex relative" style={{ width: '87.5%' }}>
-                                      {Array.from({ length: 7 }).map((_, dayIndex) => (
-                                        <div key={dayIndex} className="flex-1 border-r border-slate-200/60 dark:border-slate-800/60 last:border-0 relative p-1 overflow-y-auto max-h-[100px] custom-scrollbar flex flex-col gap-1">
-                                          {allDayWeekEvents[dayIndex].map((event, idx) => (
-                                            <div 
-                                              key={idx}
-                                              onClick={() => setSelectedEvent(event)}
-                                              className="p-1 px-1.5 bg-indigo-100 dark:bg-indigo-500/20 border-l-[3px] border-indigo-500 rounded text-[10px] font-bold text-indigo-900 dark:text-indigo-100 cursor-pointer truncate transition-all hover:bg-indigo-200 dark:hover:bg-indigo-500/30"
-                                            >
-                                              {event.title}
-                                            </div>
-                                          ))}
-                                        </div>
-                                      ))}
-                                    </div>
+                              return hasAnyAllDayEvents && (
+                                <div className="flex border-b border-slate-200/60 dark:border-slate-800/60 bg-white dark:bg-[#0d0e15] shrink-0">
+                                  <div className="w-[80px] flex flex-col justify-center items-center border-r border-slate-200/60 dark:border-slate-800/60 sticky left-0 bg-white dark:bg-[#0d0e15] z-50 shrink-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider py-2 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                                    All day
                                   </div>
-                                )}
-                                <div className="flex-1 overflow-y-auto custom-scrollbar relative pr-1 pb-16">
-                                  <div className="flex relative" style={{ height: '1536px' }}>
-                                    <div className="w-1/8 flex flex-col border-r border-slate-200/60 dark:border-slate-800/60 shrink-0 bg-white/50 dark:bg-black/50 z-10" style={{ width: '12.5%' }}>
-                                      {Array.from({ length: 24 }).map((_, i) => (
-                                        <div key={i} className="h-16 border-b border-transparent flex items-start justify-center pr-2 py-1">
-                                          <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider">{calTimeFormat === '24-hour' ? `${i.toString().padStart(2, '0')}:00` : (i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`)}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                    <div className="w-7/8 flex relative" style={{ width: '87.5%' }}>
-                                      {Array.from({ length: 24 }).map((_, h) => (
-                                        <div key={h} className="absolute left-0 right-0 border-b border-slate-100 dark:border-slate-800/40 pointer-events-none" style={{ top: `${h * 64}px`, height: '64px' }}></div>
-                                      ))}
-                                      
-                                      {(() => {
-                                        const now = new Date();
-                                        const isCurrentWeek = Array.from({ length: 7 }).some((_, dayIndex) => {
+                                  <div className="flex-1 flex relative">
+                                    {Array.from({ length: 7 }).map((_, dayIndex) => (
+                                      <div key={dayIndex} className="flex-1 border-r border-slate-200/60 dark:border-slate-800/60 last:border-0 relative p-1 overflow-y-auto max-h-[100px] custom-scrollbar flex flex-col gap-1">
+                                        {allDayWeekEvents[dayIndex].map((event, idx) => (
+                                          <div 
+                                            key={idx}
+                                            onClick={() => setSelectedEvent(event)}
+                                            className="p-1 px-1.5 bg-indigo-100 dark:bg-indigo-500/20 border-l-[3px] border-indigo-500 rounded text-[10px] font-bold text-indigo-900 dark:text-indigo-100 cursor-pointer truncate transition-all hover:bg-indigo-200 dark:hover:bg-indigo-500/30"
+                                          >
+                                            {event.title}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                          
+                          <div className="flex flex-col flex-1 shrink-0">
+                            {(() => {
+                              const allDayWeekEvents = Array.from({ length: 7 }).map((_, dayIndex) => {
+                                const date = new Date(currentCalendarDate);
+                                const startOfWeek = date.getDate() - date.getDay();
+                                date.setDate(startOfWeek + dayIndex);
+                                return filteredEvents.filter(e => {
+                                  const eventDate = new Date(e.start || e.startDate);
+                                  return e.showWithoutTime && eventDate.getDate() === date.getDate() && eventDate.getMonth() === date.getMonth() && eventDate.getFullYear() === date.getFullYear();
+                                });
+                              });
+                              return (
+                                <>
+                                  <div className="flex-1 relative border-t border-slate-200/60 dark:border-slate-800/60 pb-16">
+                                    <div className="flex relative" style={{ height: '1536px' }}>
+                                      <div className="w-[80px] flex flex-col border-r border-slate-200/60 dark:border-slate-800/60 shrink-0 sticky left-0 z-20 bg-white dark:bg-[#0d0e15] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                                        {Array.from({ length: 24 }).map((_, i) => (
+                                          <div key={i} className="h-16 border-b border-transparent flex items-start justify-center pr-2 py-1">
+                                            <span className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">{calTimeFormat === '24-hour' ? `${i.toString().padStart(2, '0')}:00` : (i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`)}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      <div className="flex-1 flex relative">
+                                        {Array.from({ length: 24 }).map((_, h) => (
+                                          <div key={h} className="absolute left-0 right-0 border-b border-slate-100 dark:border-slate-800/40 pointer-events-none" style={{ top: `${h * 64}px`, height: '64px' }}></div>
+                                        ))}
+                                        
+                                        {(() => {
+                                          const now = new Date();
+                                          const isCurrentWeek = Array.from({ length: 7 }).some((_, dayIndex) => {
+                                            const date = new Date(currentCalendarDate);
+                                            const startOfWeek = date.getDate() - date.getDay();
+                                            date.setDate(startOfWeek + dayIndex);
+                                            return date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+                                          });
+                                          
+                                          if (!isCurrentWeek) return null;
+                                          const top = now.getHours() * 64 + (now.getMinutes() / 60) * 64;
+                                          return (
+                                            <div className="absolute left-0 right-0 border-b-[2px] border-red-500/80 z-20 pointer-events-none shadow-[0_1px_4px_rgba(239,68,68,0.3)]" style={{ top: `${top}px` }}>
+                                              <div className="absolute -left-1.5 -top-[5px] w-2.5 h-2.5 rounded-full bg-red-500/80"></div>
+                                            </div>
+                                          );
+                                        })()}
+          
+                                        {Array.from({ length: 7 }).map((_, dayIndex) => {
                                           const date = new Date(currentCalendarDate);
                                           const startOfWeek = date.getDate() - date.getDay();
                                           date.setDate(startOfWeek + dayIndex);
-                                          return date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
-                                        });
-                                        
-                                        if (!isCurrentWeek) return null;
-                                        const top = now.getHours() * 64 + (now.getMinutes() / 60) * 64;
-                                        return (
-                                          <div className="absolute left-0 right-0 border-b-[2px] border-red-500/80 z-20 pointer-events-none shadow-[0_1px_4px_rgba(239,68,68,0.3)]" style={{ top: `${top}px` }}>
-                                            <div className="absolute -left-1.5 -top-[5px] w-2.5 h-2.5 rounded-full bg-red-500/80"></div>
-                                          </div>
-                                        );
-                                      })()}
-        
-                                      {Array.from({ length: 7 }).map((_, dayIndex) => {
-                                        const date = new Date(currentCalendarDate);
-                                        const startOfWeek = date.getDate() - date.getDay();
-                                        date.setDate(startOfWeek + dayIndex);
-                                        
-                                        const dayEvents = filteredEvents.filter(e => {
-                                          const eventDate = new Date(e.start || e.startDate);
-                                          return !e.showWithoutTime && eventDate.getDate() === date.getDate() && eventDate.getMonth() === date.getMonth() && eventDate.getFullYear() === date.getFullYear();
-                                        }).sort((a, b) => new Date(a.start || a.startDate).getTime() - new Date(b.start || b.startDate).getTime());
-                                        
-                                        // Simple overlap layout
-                                        const columns: any[][] = [];
-                                        const layouts = dayEvents.map(event => {
-                                          const start = new Date(event.start || event.startDate).getTime();
-                                          const end = event.endDate ? new Date(event.endDate).getTime() : start + 60 * 60 * 1000;
-                                          let colIdx = 0;
-                                          for (let i = 0; i < columns.length; i++) {
-                                            const lastEvent = columns[i][columns[i].length - 1];
-                                            const lastEnd = lastEvent.endDate ? new Date(lastEvent.endDate).getTime() : new Date(lastEvent.start || lastEvent.startDate).getTime() + 60 * 60 * 1000;
-                                            if (start >= lastEnd) {
-                                              columns[i].push(event);
-                                              colIdx = i;
-                                              break;
-                                            }
-                                            if (i === columns.length - 1) {
-                                              columns.push([event]);
-                                              colIdx = columns.length - 1;
-                                              break;
-                                            }
-                                          }
-                                          if (columns.length === 0) {
-                                            columns.push([event]);
-                                          }
-                                          return { event, colIdx };
-                                        });
-
-                                        return (
-                                          <div 
-                                            key={dayIndex} 
-                                            className="flex-1 relative border-r border-slate-100 dark:border-slate-800/40 last:border-0 h-[1536px] cursor-text"
-                                            onDoubleClick={(e) => {
-                                               const rect = e.currentTarget.getBoundingClientRect();
-                                               const y = e.clientY - rect.top;
-                                               const hour = Math.floor(y / 64);
-                                               const clickDate = new Date(date);
-                                               clickDate.setHours(hour, 0, 0, 0);
-                                               setNewEvent({ ...newEvent, startDate: format(clickDate, 'yyyy-MM-dd'), startTime: format(clickDate, 'HH:mm'), endDate: format(clickDate, 'yyyy-MM-dd'), endTime: format(new Date(clickDate.getTime() + 3600000), 'HH:mm') });
-                                               setIsEventModalOpen(true);
-                                            }}
-                                          >
-                                            {layouts.map(({ event, colIdx }, idx) => {
-                                              const eventDate = new Date(event.start || event.startDate);
-                                              const startTokens = event.startTime ? event.startTime.split(':') : [];
-                                              const endTokens = event.endTime ? event.endTime.split(':') : [];
-                                              
-                                              const startHours = startTokens.length ? parseInt(startTokens[0]) : eventDate.getHours();
-                                              const startMins = startTokens.length ? parseInt(startTokens[1]) : eventDate.getMinutes();
-                                              const top = startHours * 64 + (startMins / 60) * 64;
-                                              
-                                              let height = 48; // default approx 45 mins
-                                              if (event.startDate && event.endDate && event.startTime && event.endTime && event.startDate === event.endDate) {
-                                                const endHours = parseInt(endTokens[0] || '0');
-                                                const endMins = parseInt(endTokens[1] || '0');
-                                                const diffMins = (endHours * 60 + endMins) - (startHours * 60 + startMins);
-                                                if (diffMins > 0) height = (diffMins / 60) * 64;
+                                          
+                                          const dayEvents = filteredEvents.filter(e => {
+                                            const eventDate = new Date(e.start || e.startDate);
+                                            return !e.showWithoutTime && eventDate.getDate() === date.getDate() && eventDate.getMonth() === date.getMonth() && eventDate.getFullYear() === date.getFullYear();
+                                          }).sort((a, b) => new Date(a.start || a.startDate).getTime() - new Date(b.start || b.startDate).getTime());
+                                          
+                                          // Simple overlap layout
+                                          const columns: any[][] = [];
+                                          const layouts = dayEvents.map(event => {
+                                            const start = new Date(event.start || event.startDate).getTime();
+                                            const end = event.endDate ? new Date(event.endDate).getTime() : start + 60 * 60 * 1000;
+                                            let colIdx = 0;
+                                            for (let i = 0; i < columns.length; i++) {
+                                              const lastEvent = columns[i][columns[i].length - 1];
+                                              const lastEnd = lastEvent.endDate ? new Date(lastEvent.endDate).getTime() : new Date(lastEvent.start || lastEvent.startDate).getTime() + 60 * 60 * 1000;
+                                              if (start >= lastEnd) {
+                                                columns[i].push(event);
+                                                colIdx = i;
+                                                break;
                                               }
-                                              
-                                              const widthPct = columns.length > 0 ? 100 / columns.length : 100;
-                                              const leftPct = widthPct * colIdx;
-                                              
-                                              return (
-                                                <div 
-                                                  key={idx}
-                                                  onClick={() => setSelectedEvent(event)}
-                                                  className="absolute p-1.5 bg-indigo-100 dark:bg-indigo-500/20 border-l-[3px] border-indigo-500 rounded text-xs font-semibold text-indigo-800 dark:text-indigo-200 cursor-pointer overflow-hidden shadow-sm hover:shadow-md transition-all z-10"
-                                                  style={{ 
-                                                    top: `${top}px`, 
-                                                    height: `${height}px`,
-                                                    left: `calc(${leftPct}% + 1px)`,
-                                                    width: `calc(${widthPct}% - 2px)`
-                                                  }}
-                                                >
-                                                  <div className="truncate">{event.title}</div>
-                                                  <div className="text-[10px] opacity-80 mt-0.5 font-normal truncate">
-                                                    {format(eventDate, calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')}
+                                              if (i === columns.length - 1) {
+                                                columns.push([event]);
+                                                colIdx = columns.length - 1;
+                                                break;
+                                              }
+                                            }
+                                            if (columns.length === 0) {
+                                              columns.push([event]);
+                                            }
+                                            return { event, colIdx };
+                                          });
+
+                                          return (
+                                            <div 
+                                              key={dayIndex} 
+                                              className="flex-1 relative border-r border-slate-100 dark:border-slate-800/40 last:border-0 h-[1536px] cursor-text"
+                                              onDoubleClick={(e) => {
+                                                 const rect = e.currentTarget.getBoundingClientRect();
+                                                 const y = e.clientY - rect.top;
+                                                 const hour = Math.floor(y / 64);
+                                                 const clickDate = new Date(date);
+                                                 clickDate.setHours(hour, 0, 0, 0);
+                                                 setNewEvent({ ...newEvent, startDate: format(clickDate, 'yyyy-MM-dd'), startTime: format(clickDate, 'HH:mm'), endDate: format(clickDate, 'yyyy-MM-dd'), endTime: format(new Date(clickDate.getTime() + 3600000), 'HH:mm') });
+                                                 setIsEventModalOpen(true);
+                                              }}
+                                            >
+                                              {layouts.map(({ event, colIdx }, idx) => {
+                                                const eventDate = new Date(event.start || event.startDate);
+                                                const startTokens = event.startTime ? event.startTime.split(':') : [];
+                                                const endTokens = event.endTime ? event.endTime.split(':') : [];
+                                                
+                                                const startHours = startTokens.length ? parseInt(startTokens[0]) : eventDate.getHours();
+                                                const startMins = startTokens.length ? parseInt(startTokens[1]) : eventDate.getMinutes();
+                                                const top = startHours * 64 + (startMins / 60) * 64;
+                                                
+                                                let height = 48; // default approx 45 mins
+                                                if (event.startDate && event.endDate && event.startTime && event.endTime && event.startDate === event.endDate) {
+                                                  const endHours = parseInt(endTokens[0] || '0');
+                                                  const endMins = parseInt(endTokens[1] || '0');
+                                                  const diffMins = (endHours * 60 + endMins) - (startHours * 60 + startMins);
+                                                  if (diffMins > 0) height = (diffMins / 60) * 64;
+                                                }
+                                                
+                                                const widthPct = columns.length > 0 ? 100 / columns.length : 100;
+                                                const leftPct = widthPct * colIdx;
+                                                // Adjust color to match calendar theme
+                                                const calColor = calendars.find(c => c.id === event.calendarId)?._color || 'rgb(99 102 241)';
+                                                
+                                                return (
+                                                  <div 
+                                                    key={idx}
+                                                    onClick={() => setSelectedEvent(event)}
+                                                    className="absolute p-2 bg-indigo-50/90 dark:bg-indigo-500/10 border-l-[4px] border-indigo-500 rounded-md text-[11px] sm:text-xs font-semibold text-indigo-900 dark:text-indigo-100 cursor-pointer overflow-hidden shadow-sm hover:shadow-md transition-all z-10 backdrop-blur-sm"
+                                                    style={{ 
+                                                      top: `${top}px`, 
+                                                      height: `${height}px`,
+                                                      left: `calc(${leftPct}% + 1px)`,
+                                                      width: `calc(${widthPct}% - 2px)`,
+                                                      borderLeftColor: calColor,
+                                                    }}
+                                                  >
+                                                    <div className="truncate leading-tight mb-0.5">{event.title}</div>
+                                                    <div className="text-[9px] sm:text-[10px] opacity-70 font-medium truncate">
+                                                      {format(eventDate, calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')}
+                                                    </div>
                                                   </div>
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-                                        );
-                                      })}
+                                                );
+                                              })}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
-                              </>
-                            );
-                          })()}
+                                </>
+                              );
+                            })()}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -5441,22 +6038,22 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                               key={eIdx}
                                               onClick={() => setSelectedEvent(event)}
                                               className={cn(
-                                                "w-full flex items-start px-4 py-[14px] sm:py-[18px] hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors text-left",
+                                                "w-full flex items-start px-4 py-[14px] sm:py-[18px] hover:bg-indigo-50/50 dark:hover:bg-indigo-500/10 transition-colors text-left border-l-[3px] border-transparent hover:border-indigo-500",
                                                 isPast && "opacity-60"
                                               )}
                                               style={{ gap: '16px' }}
                                             >
                                               <div className="flex flex-col items-center pt-[3px] min-w-[64px] shrink-0">
                                                 {event.showWithoutTime || event.isAllDay ? (
-                                                  <span className="text-[12px] font-semibold text-slate-500 dark:text-slate-400">
+                                                  <span className="text-[12px] font-semibold text-indigo-500 dark:text-indigo-400">
                                                     All day
                                                   </span>
                                                 ) : (
                                                   <>
-                                                    <span className="text-[14px] font-semibold text-slate-900 dark:text-slate-200 leading-tight">
+                                                    <span className="text-[14px] font-semibold text-indigo-900 dark:text-indigo-200 leading-tight">
                                                       {format(eventDate, calTimeFormat === '24-hour' ? 'HH:mm' : 'h:mm a')}
                                                     </span>
-                                                    <span className="text-[12px] text-slate-500 mt-[1px]">
+                                                    <span className="text-[12px] text-indigo-500/70 dark:text-indigo-400/70 mt-[1px]">
                                                       {endStr}
                                                     </span>
                                                   </>
@@ -5465,7 +6062,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                               
                                               <div 
                                                 className="w-[4px] self-stretch rounded-full shrink-0" 
-                                                style={{ backgroundColor: cal?.color || '#3b82f6' }}
+                                                style={{ backgroundColor: cal?.color || '#4f46e5' }}
                                               ></div>
                                               
                                               <div className="flex-1 min-w-0 flex flex-col pt-[1px]">
@@ -5486,7 +6083,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                                 )}
                                                 {cal && (
                                                   <div className="flex items-center gap-1.5 text-[13px] text-slate-500 dark:text-slate-400 mt-[3px]">
-                                                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cal.color || '#3b82f6' }} />
+                                                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cal.color || '#4f46e5' }} />
                                                     <span className="truncate">{cal.name}</span>
                                                   </div>
                                                 )}
@@ -5542,7 +6139,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 <nav className="flex-col gap-1 flex flex-1 overflow-y-auto pr-2 custom-scrollbar">
                   {[
                     { id: 'account', icon: User },
+                    { id: 'identities', icon: Mail },
                     { id: 'general', icon: Settings },
+                    { id: 'compose', icon: Edit3 },
+                    { id: 'read', icon: BookOpen },
                     { id: 'notifications', icon: Bell },
                     { id: 'vacation', icon: Reply },
                     { id: 'templates', icon: File },
@@ -5584,6 +6184,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   <h1 className="text-xl font-bold text-slate-900 dark:text-white md:text-2xl">
                     {isSettingsSection === 'account' ? t(language, 'accountInformation') : 
                      isSettingsSection === 'general' ? t(language, 'generalSettings') : 
+                     isSettingsSection === 'compose' ? 'Compose' :
+                     isSettingsSection === 'read' ? 'Read' :
+                     isSettingsSection === 'identities' ? t(language, 'identities') :
                      isSettingsSection === 'security' ? t(language, 'security') : 
                      isSettingsSection === 'vacation' ? t(language, 'vacation') : 
                      isSettingsSection === 'notifications' ? t(language, 'notifications') : 
@@ -5600,6 +6203,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   >
                     {isSettingsSection === 'account' ? t(language, 'account') : 
                      isSettingsSection === 'general' ? t(language, 'general') : 
+                     isSettingsSection === 'compose' ? 'Compose' :
+                     isSettingsSection === 'read' ? 'Read' :
+                     isSettingsSection === 'identities' ? t(language, 'identities') :
                      isSettingsSection === 'security' ? t(language, 'security') : 
                      isSettingsSection === 'vacation' ? t(language, 'vacation') : 
                      isSettingsSection === 'notifications' ? t(language, 'notifications') : 
@@ -5627,7 +6233,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       <div className="p-2 overflow-y-auto flex-1 custom-scrollbar">
                         {[
                           { id: 'account', icon: User },
+                          { id: 'identities', icon: Mail },
                           { id: 'general', icon: Settings },
+                          { id: 'compose', icon: Edit3 },
+                          { id: 'read', icon: BookOpen },
                           { id: 'notifications', icon: Bell },
                           { id: 'vacation', icon: Reply },
                           { id: 'templates', icon: File },
@@ -5692,6 +6301,17 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         </div>
                       </div>
                       
+                      <button 
+                        onClick={onLogout}
+                        className="w-full py-4 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-red-100 dark:hover:bg-red-500/20 transition-all border border-red-100 dark:border-red-900/30"
+                      >
+                        <LogOut className="w-5 h-5" /> Sign Out
+                      </button>
+                    </div>
+                  )}
+
+                  {isSettingsSection === 'identities' && (
+                    <div className="grid gap-6">
                       <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
                         <div className="flex items-center gap-3 mb-6">
                           <div className="p-2 bg-purple-100 dark:bg-purple-500/10 rounded-xl">
@@ -5699,6 +6319,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           </div>
                           <h2 className="text-xl font-bold text-slate-900 dark:text-white">{t(language, 'emailIdentities')}</h2>
                         </div>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
+                          Manage your email identities. Note: You can also use plus addressing (e.g., yourname+tag@domain.com) directly when composing emails or sharing your address.
+                        </p>
 
                         <div className="space-y-4">
                           { (identities || []).map((identity) => (
@@ -5748,13 +6371,461 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           </div>
                         </div>
                       </div>
+                    </div>
+                  )}
 
-                      <button 
-                        onClick={onLogout}
-                        className="w-full py-4 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-red-100 dark:hover:bg-red-500/20 transition-all border border-red-100 dark:border-red-900/30"
-                      >
-                        <LogOut className="w-5 h-5" /> Sign Out
-                      </button>
+                  {isSettingsSection === 'read' && (
+                    <div className="grid gap-6">
+                      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
+                            <BookOpen className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                          </div>
+                          <div>
+                            <h2 className="text-lg font-bold text-slate-900 dark:text-white">Reading</h2>
+                            <p className="text-sm font-medium text-slate-500">Configure how you read your messages</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-6">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Automatically mark as read</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">When should messages be marked as read?</div>
+                            </div>
+                            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shrink-0">
+                              <button
+                                onClick={() => { setReadAutoMark('immediately'); localStorage.setItem('webmail_read_auto_mark', 'immediately'); }}
+                                className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all", readAutoMark === 'immediately' ? "bg-white dark:bg-[#1a1b26] text-indigo-600 shadow-sm" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white")}
+                              >
+                                Immediately
+                              </button>
+                              <button
+                                onClick={() => { setReadAutoMark('delayed'); localStorage.setItem('webmail_read_auto_mark', 'delayed'); }}
+                                className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all", readAutoMark === 'delayed' ? "bg-white dark:bg-[#1a1b26] text-indigo-600 shadow-sm" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white")}
+                              >
+                                After 3s
+                              </button>
+                              <button
+                                onClick={() => { setReadAutoMark('never'); localStorage.setItem('webmail_read_auto_mark', 'never'); }}
+                                className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all", readAutoMark === 'never' ? "bg-white dark:bg-[#1a1b26] text-indigo-600 shadow-sm" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white")}
+                              >
+                                Never
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Show remote images</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Automatically display external images in emails</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !readShowImages;
+                                setReadShowImages(newValue);
+                                localStorage.setItem('webmail_read_show_images', newValue.toString());
+                              }}
+                              className={cn(
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                readShowImages ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", readShowImages ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">After deleting message</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">When viewing an email and deleting it, show the next message</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !readNextOnDelete;
+                                setReadNextOnDelete(newValue);
+                                localStorage.setItem('webmail_read_next_on_delete', newValue.toString());
+                              }}
+                              className={cn(
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                readNextOnDelete ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", readNextOnDelete ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Delete Action</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Move messages to trash or permanently delete them immediately</div>
+                            </div>
+                            <div className="flex flex-col gap-2 shrink-0 max-w-[200px] w-full items-end">
+                              <select 
+                                value={readDeleteAction}
+                                onChange={(e) => {
+                                  setReadDeleteAction(e.target.value);
+                                  localStorage.setItem('webmail_read_delete_action', e.target.value);
+                                }}
+                                className="w-full px-4 py-2 bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-sm font-bold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none cursor-pointer"
+                              >
+                                <option value="trash">Move to Trash</option>
+                                <option value="permanent">Permanently Delete</option>
+                              </select>
+                              {readDeleteAction === 'permanent' && (
+                                <div className="text-[11px] text-red-500 font-bold bg-red-50 dark:bg-red-500/10 px-2 py-1 rounded w-full text-center">
+                                  Warning: Cannot be undone
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Archive Mode</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">How archived messages are organized</div>
+                            </div>
+                            <select 
+                              value={readArchiveMode}
+                              onChange={(e) => {
+                                setReadArchiveMode(e.target.value);
+                                localStorage.setItem('webmail_read_archive_mode', e.target.value);
+                              }}
+                              className="px-4 py-2 bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-sm font-bold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none cursor-pointer shrink-0 min-w-[150px]"
+                            >
+                              <option value="single">Single Folder</option>
+                              <option value="year">By Year</option>
+                              <option value="month">By Month</option>
+                            </select>
+                          </div>
+                          
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Attachment Click Action</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">What happens when you click an attachment</div>
+                            </div>
+                            <select 
+                              value={readAttachmentAction}
+                              onChange={(e) => {
+                                setReadAttachmentAction(e.target.value);
+                                localStorage.setItem('webmail_read_attachment_action', e.target.value);
+                              }}
+                              className="px-4 py-2 bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-sm font-bold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none cursor-pointer shrink-0 min-w-[150px]"
+                            >
+                              <option value="preview">Preview First</option>
+                              <option value="download">Direct Download</option>
+                            </select>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Emails per page</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Number of emails to load per page</div>
+                            </div>
+                            <select 
+                              value={readEmailsPerPage.toString()}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                setReadEmailsPerPage(val);
+                                localStorage.setItem('webmail_read_emails_per_page', val.toString());
+                              }}
+                              className="px-4 py-2 bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-sm font-bold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none cursor-pointer shrink-0 min-w-[150px]"
+                            >
+                              <option value="10">10 Emails</option>
+                              <option value="25">25 Emails</option>
+                              <option value="50">50 Emails</option>
+                              <option value="100">100 Emails</option>
+                            </select>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Permanently Delete Junk</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Permanently delete emails from the Junk/Spam folder instead of moving them to Trash</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !readPermanentDeleteJunk;
+                                setReadPermanentDeleteJunk(newValue);
+                                localStorage.setItem('webmail_read_permanent_delete_junk', newValue.toString());
+                              }}
+                              className={cn(
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                readPermanentDeleteJunk ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", readPermanentDeleteJunk ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Show Preview Text</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Display inline preview text inside the focused one-line message list</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !readShowPreviewText;
+                                setReadShowPreviewText(newValue);
+                                localStorage.setItem('webmail_read_show_preview_text', newValue.toString());
+                              }}
+                              className={cn(
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                readShowPreviewText ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", readShowPreviewText ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Disable Conversation Grouping</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Show emails as individual messages instead of grouped by conversation</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !readDisableConvGrouping;
+                                setReadDisableConvGrouping(newValue);
+                                localStorage.setItem('webmail_read_disable_conv_grouping', newValue.toString());
+                              }}
+                              className={cn(
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                readDisableConvGrouping ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", readDisableConvGrouping ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
+                          
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Plain Text Only</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Disable the rich text editor and send all emails as plain text only, including replies and forwards</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !readPlainTextOnly;
+                                setReadPlainTextOnly(newValue);
+                                localStorage.setItem('webmail_read_plain_text_only', newValue.toString());
+                              }}
+                              className={cn(
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                readPlainTextOnly ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", readPlainTextOnly ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Attachment Position</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Where to display attachments in the email header</div>
+                            </div>
+                            <select 
+                              value={readAttachmentPosition}
+                              onChange={(e) => {
+                                setReadAttachmentPosition(e.target.value);
+                                localStorage.setItem('webmail_read_attachment_position', e.target.value);
+                              }}
+                              className="px-4 py-2 bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-sm font-bold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none cursor-pointer shrink-0 min-w-[150px]"
+                            >
+                              <option value="below_header">Below header</option>
+                              <option value="below_message">Below message</option>
+                            </select>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Hide inline images from attachments</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Images embedded in the message body are not listed as separate attachments</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !readHideInlineImages;
+                                setReadHideInlineImages(newValue);
+                                localStorage.setItem('webmail_read_hide_inline_images', newValue.toString());
+                              }}
+                              className={cn(
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                readHideInlineImages ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", readHideInlineImages ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
+
+                          <div className="flex flex-col gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Quick Hover Actions</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm mb-4">Choose which quick actions appear when hovering over an email in the list</div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {['Delete', 'Star / Unstar', 'Mark Read / Unread', 'Archive', 'Tag', 'Mark as Spam'].map((action) => {
+                                const actionKey = action.toLowerCase().replace(/ \/ /g, '_').replace(/ /g, '_');
+                                const isSelected = readQuickHoverActions.includes(actionKey);
+                                return (
+                                  <button
+                                    key={actionKey}
+                                    onClick={() => {
+                                      const newSelection = isSelected 
+                                        ? readQuickHoverActions.filter(a => a !== actionKey)
+                                        : [...readQuickHoverActions, actionKey];
+                                      setReadQuickHoverActions(newSelection);
+                                      localStorage.setItem('webmail_read_quick_hover_actions', JSON.stringify(newSelection));
+                                    }}
+                                    className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all border", isSelected ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300")}
+                                  >
+                                    {action}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Display Mode</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">How to display the email viewer</div>
+                            </div>
+                            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shrink-0">
+                              <button
+                                onClick={() => { setReadDisplayMode('inline'); localStorage.setItem('webmail_read_display_mode', 'inline'); }}
+                                className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all", readDisplayMode === 'inline' ? "bg-white dark:bg-[#1a1b26] text-indigo-600 shadow-sm" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white")}
+                              >
+                                Inline
+                              </button>
+                              <button
+                                onClick={() => { setReadDisplayMode('floating'); localStorage.setItem('webmail_read_display_mode', 'floating'); }}
+                                className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all", readDisplayMode === 'floating' ? "bg-white dark:bg-[#1a1b26] text-indigo-600 shadow-sm" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white")}
+                              >
+                                Floating
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {isSettingsSection === 'compose' && (
+                    <div className="grid gap-6">
+                      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
+                            <Edit3 className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                          </div>
+                          <div>
+                            <h2 className="text-lg font-bold text-slate-900 dark:text-white">Compose</h2>
+                            <p className="text-sm font-medium text-slate-500">Configure how you compose messages</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-6">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Compose Format</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Choose the default format for drafting new emails</div>
+                            </div>
+                            <select 
+                              value={composeFormat}
+                              onChange={(e) => {
+                                setComposeFormat(e.target.value);
+                                localStorage.setItem('webmail_compose_format', e.target.value);
+                              }}
+                              className="px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-indigo-500 min-w-[120px]"
+                            >
+                              <option value="html">Rich Text</option>
+                              <option value="markdown">Markdown</option>
+                              <option value="plain">Plain Text</option>
+                            </select>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Undo Send Delay</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Time to wait before actually sending your message</div>
+                            </div>
+                            <select 
+                              value={composeUndoSend.toString()}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                setComposeUndoSend(val);
+                                localStorage.setItem('webmail_compose_undo_send', val.toString());
+                              }}
+                              className="px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-indigo-500 min-w-[120px]"
+                            >
+                              <option value="0">Disabled</option>
+                              <option value="5">5 seconds</option>
+                              <option value="10">10 seconds</option>
+                              <option value="30">30 seconds</option>
+                            </select>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Auto-Save Drafts</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Interval to automatically save drafts as you type</div>
+                            </div>
+                            <select 
+                              value={composeAutoSave.toString()}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                setComposeAutoSave(val);
+                                localStorage.setItem('webmail_compose_auto_save', val.toString());
+                              }}
+                              className="px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-indigo-500 min-w-[120px]"
+                            >
+                              <option value="1">Every 1 minute</option>
+                              <option value="3">Every 3 minutes</option>
+                              <option value="5">Every 5 minutes</option>
+                              <option value="10">Every 10 minutes</option>
+                            </select>
+                          </div>
+                          
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Attachment Reminder</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Warn if message contains keywords like "attached" but has no attachments</div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                  const newVal = composeAttachmentReminder === "true" ? "false" : "true";
+                                  setComposeAttachmentReminder(newVal);
+                                  localStorage.setItem('webmail_compose_attachment_reminder', newVal);
+                                }}
+                                className={cn(
+                                  "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                  composeAttachmentReminder === "true" ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                                )}
+                              >
+                                <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", composeAttachmentReminder === "true" ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
+                          
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Auto-select Reply Identity</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">When replying, automatically select the identity that received the message</div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                  const newVal = composeAutoSelectIdentity === "true" ? "false" : "true";
+                                  setComposeAutoSelectIdentity(newVal);
+                                  localStorage.setItem('webmail_compose_auto_select_identity', newVal);
+                                }}
+                                className={cn(
+                                  "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                  composeAutoSelectIdentity === "true" ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                                )}
+                              >
+                                <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", composeAutoSelectIdentity === "true" ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
+
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -5931,11 +7002,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 }
                               }}
                               className={cn(
-                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
-                                emailNotificationsEnabled ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                emailNotificationsEnabled ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
                               )}
                             >
-                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", emailNotificationsEnabled ? "translate-x-6" : "translate-x-0")}></div>
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", emailNotificationsEnabled ? "translate-x-7" : "translate-x-1")} />
                             </button>
                           </div>
 
@@ -5951,11 +7022,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 localStorage.setItem('webmail_email_sound', newValue.toString());
                               }}
                               className={cn(
-                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
-                                emailSoundEnabled ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                emailSoundEnabled ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
                               )}
                             >
-                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", emailSoundEnabled ? "translate-x-6" : "translate-x-0")}></div>
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", emailSoundEnabled ? "translate-x-7" : "translate-x-1")} />
                             </button>
                           </div>
                         </div>
@@ -6001,11 +7072,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 }
                               }}
                               className={cn(
-                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
-                                calendarNotificationsEnabled ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                calendarNotificationsEnabled ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
                               )}
                             >
-                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", calendarNotificationsEnabled ? "translate-x-6" : "translate-x-0")}></div>
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", calendarNotificationsEnabled ? "translate-x-7" : "translate-x-1")} />
                             </button>
                           </div>
 
@@ -6021,11 +7092,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 localStorage.setItem('webmail_calendar_sound', newValue.toString());
                               }}
                               className={cn(
-                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
-                                calendarSoundEnabled ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                calendarSoundEnabled ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
                               )}
                             >
-                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", calendarSoundEnabled ? "translate-x-6" : "translate-x-0")}></div>
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", calendarSoundEnabled ? "translate-x-7" : "translate-x-1")} />
                             </button>
                           </div>
 
@@ -6041,11 +7112,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 localStorage.setItem('webmail_parse_invitations', newValue.toString());
                               }}
                               className={cn(
-                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
-                                parseEmailInvitations ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                parseEmailInvitations ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
                               )}
                             >
-                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", parseEmailInvitations ? "translate-x-6" : "translate-x-0")}></div>
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", parseEmailInvitations ? "translate-x-7" : "translate-x-1")} />
                             </button>
                           </div>
                         </div>
@@ -6144,7 +7215,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               }
                             }}
                             disabled={isSavingVacation}
-                            className="w-full sm:w-auto px-8 py-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-2xl shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                            className={cn("w-full sm:w-auto px-8 py-4 disabled:opacity-50 text-white font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all active:scale-[0.98]",
+                              vacationEnabled ? "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20" : "bg-slate-300 dark:bg-slate-700 text-slate-500 shadow-none hover:bg-slate-400 dark:hover:bg-slate-600"
+                            )}
                           >
                             {isSavingVacation ? <Loader2 className="w-5 h-5 animate-spin" /> : <MailCheck className="w-5 h-5" />}
                             {t(language, 'updateResponder')}
@@ -6384,13 +7457,18 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   )}
 
                   {isSettingsSection === 'calendar' && (
-                    <div className="grid gap-8">
-                      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden text-slate-900 dark:text-white pb-6">
-                        <div className="p-6">
-                          <h2 className="text-xl font-bold mb-6">Calendar settings</h2>
-                          
-                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
-                            <span className="font-bold cursor-pointer">Default view</span>
+                    <div className="grid gap-6">
+                      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
+                            <Calendar className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                          </div>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Calendar View</h2>
+                        </div>
+                        
+                        <div className="space-y-6">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <span className="text-slate-600 dark:text-slate-400 font-medium tracking-wide">Default view</span>
                             <select 
                               value={calDefaultView}
                               onChange={(e) => {
@@ -6406,8 +7484,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             </select>
                           </div>
 
-                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
-                            <span className="font-bold cursor-pointer">Time format</span>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <span className="text-slate-600 dark:text-slate-400 font-medium tracking-wide">Time format</span>
                             <select 
                               value={calTimeFormat}
                               onChange={(e) => {
@@ -6421,8 +7499,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             </select>
                           </div>
 
-                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
-                            <span className="font-bold cursor-pointer">Week starts on</span>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <span className="text-slate-600 dark:text-slate-400 font-medium tracking-wide">Week starts on</span>
                             <select 
                               value={calWeekStartsOn}
                               onChange={(e) => {
@@ -6435,9 +7513,20 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               <option value="Sunday">Sunday</option>
                             </select>
                           </div>
+                        </div>
+                      </div>
 
-                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
-                            <div>
+                      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-purple-100 dark:bg-purple-500/10 rounded-xl">
+                            <Settings className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                          </div>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Events & Preferences</h2>
+                        </div>
+                        
+                        <div className="space-y-6">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
                               <div className="font-bold mb-1">Show time in month view</div>
                               <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Display event times in the month calendar view</div>
                             </div>
@@ -6448,16 +7537,16 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 localStorage.setItem('webmail_cal_show_time', newValue.toString());
                               }}
                               className={cn(
-                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
-                                calShowTimeInMonth ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                calShowTimeInMonth ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
                               )}
                             >
-                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", calShowTimeInMonth ? "translate-x-6" : "translate-x-0")}></div>
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", calShowTimeInMonth ? "translate-x-7" : "translate-x-1")} />
                             </button>
                           </div>
 
-                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
-                            <div>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
                               <div className="font-bold mb-1">Show week numbers</div>
                               <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Display week numbers in the mini-calendar</div>
                             </div>
@@ -6468,16 +7557,36 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 localStorage.setItem('webmail_cal_week_numbers', newValue.toString());
                               }}
                               className={cn(
-                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
-                                calShowWeekNumbers ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                calShowWeekNumbers ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
                               )}
                             >
-                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", calShowWeekNumbers ? "translate-x-6" : "translate-x-0")}></div>
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", calShowWeekNumbers ? "translate-x-7" : "translate-x-1")} />
+                            </button>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="font-bold mb-1">Compact Month View</div>
+                              <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Show colored dots instead of full event banners in month view</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newValue = !calCompactMonthView;
+                                setCalCompactMonthView(newValue);
+                                localStorage.setItem('webmail_cal_month_compact', newValue.toString());
+                              }}
+                              className={cn(
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                calCompactMonthView ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
+                              )}
+                            >
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", calCompactMonthView ? "translate-x-7" : "translate-x-1")} />
                             </button>
                           </div>
                           
-                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
-                            <div>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-6">
+                            <div className="flex-1 min-w-0 pr-4">
                               <div className="font-bold mb-1">Event hover preview</div>
                               <div className="text-slate-500 dark:text-slate-400 text-sm">Show a detail popover when hovering over calendar events</div>
                             </div>
@@ -6495,8 +7604,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             </select>
                           </div>
                           
-                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 py-6">
-                            <div>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0 pr-4">
                               <div className="font-bold mb-1">Contact birthday calendar</div>
                               <div className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">Show a virtual calendar with birthdays from your contacts</div>
                             </div>
@@ -6507,170 +7616,205 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                                 localStorage.setItem('webmail_cal_birthday', newValue.toString());
                               }}
                               className={cn(
-                                "w-12 h-6 rounded-full relative cursor-pointer pt-[2px] px-[2px] transition-colors shrink-0",
-                                calContactBirthday ? "bg-indigo-500" : "bg-slate-200 dark:bg-slate-700"
+                                "relative inline-flex h-8 w-14 items-center rounded-full transition-all shrink-0",
+                                calContactBirthday ? "bg-indigo-600" : "bg-slate-200 dark:bg-slate-700"
                               )}
                             >
-                              <div className={cn("w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200", calContactBirthday ? "translate-x-6" : "translate-x-0")}></div>
+                              <span className={cn("inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform duration-200", calContactBirthday ? "translate-x-7" : "translate-x-1")} />
                             </button>
                           </div>
+                        </div>
+                      </div>
 
-                          <div className="py-8 border-t border-slate-200 dark:border-slate-800">
-                            <p className="text-slate-500 dark:text-slate-400 text-[13px] md:text-sm font-medium mb-6">Create, rename, and customize your calendars. Right-click a calendar in the sidebar to quickly change its color.</p>
-                            
-                            <div className="space-y-3 mb-6">
-                              {calendars && calendars.filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).map((cal, idx) => (
-                                <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 dark:bg-[#111111] rounded-xl border border-slate-100 dark:border-[#222222]">
-                                  <div className="flex items-center gap-3 mb-3 sm:mb-0">
-                                    <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: cal.color || '#4f46e5' }}></div>
-                                    <Calendar className="w-5 h-5 text-slate-400" />
-                                    <span className="font-bold text-slate-700 dark:text-slate-200">{cal.name}</span>
-                                    {idx === 0 && <span className="ml-2 px-2 py-0.5 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[10px] font-bold rounded-full uppercase tracking-wider">Default</span>}
-                                  </div>
-                                  <div className="flex items-center gap-1 sm:gap-2">
-                                    <button
-                                      className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-lg transition-colors"
-                                      title="Share link"
-                                    >
-                                      <Link className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-lg transition-colors"
-                                      title="Copy link"
-                                    >
-                                      <Copy className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      onClick={async () => {
-                                        if(confirm('Are you sure you want to delete this calendar?')) {
-                                          try {
-                                            const client = new JmapClient(credentials);
-                                            await client.deleteCalendar(cal.id);
-                                            toast.success("Calendar deleted");
-                                            setCalendars(await client.getCalendars());
-                                          } catch (err: any) {
-                                            toast.error(err.message || 'Failed to delete calendar');
-                                          }
-                                        }
-                                      }}
-                                      className="p-2 text-slate-400 hover:text-red-500 rounded-lg transition-colors"
-                                      title="Delete calendar"
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                              {!calendars?.filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).length && <div className="text-sm text-slate-500 p-4">No calendars found.</div>}
-                            </div>
-                            
-                            <div className="flex flex-wrap items-center gap-3 mb-10">
-                              <button 
-                                onClick={() => setIsAddCalendarOpen(true)}
-                                className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-full shadow-sm transition-transform active:scale-95 flex items-center gap-2 text-sm"
-                              >
-                                <Plus className="w-4 h-4" /> Add calendar
-                              </button>
-                              <button 
-                                onClick={() => {
-                                  const input = document.createElement('input');
-                                  input.type = 'file';
-                                  input.accept = '.ics';
-                                  input.onchange = (e: any) => {
-                                    if (e.target.files && e.target.files.length > 0) {
-                                      toast.success(`Successfully imported events from ${e.target.files[0].name}`);
+                      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-pink-100 dark:bg-pink-500/10 rounded-xl">
+                            <Calendar className="w-5 h-5 text-pink-600 dark:text-pink-400" />
+                          </div>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Calendars</h2>
+                        </div>
+                        <p className="text-slate-500 dark:text-slate-400 text-[13px] md:text-sm font-medium mb-6">Create, rename, and customize your calendars. Right-click a calendar in the sidebar to quickly change its color.</p>
+                        
+                        <div className="space-y-3 mb-6">
+                          {calendars && calendars.filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).map((cal, idx) => (
+                            <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 dark:bg-[#111111] rounded-xl border border-slate-100 dark:border-[#222222]">
+                              <div className="flex items-center gap-3 mb-3 sm:mb-0">
+                                <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: cal.color || '#4f46e5' }}></div>
+                                <Calendar className="w-5 h-5 text-slate-400" />
+                                <span className="font-bold text-slate-700 dark:text-slate-200">{cal.name}</span>
+                                {idx === 0 && <span className="ml-2 px-2 py-0.5 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[10px] font-bold rounded-full uppercase tracking-wider">Default</span>}
+                              </div>
+                              <div className="flex items-center gap-1 sm:gap-2">
+                                <button
+                                  className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-lg transition-colors"
+                                  title="Share link"
+                                >
+                                  <Link className="w-4 h-4" />
+                                </button>
+                                <button
+                                  className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-lg transition-colors"
+                                  title="Copy link"
+                                >
+                                  <Copy className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if(confirm('Are you sure you want to delete this calendar?')) {
+                                      try {
+                                        const client = new JmapClient(credentials);
+                                        await client.deleteCalendar(cal.id);
+                                        toast.success("Calendar deleted");
+                                        setCalendars(await client.getCalendars());
+                                      } catch (err: any) {
+                                        toast.error(err.message || 'Failed to delete calendar');
+                                      }
                                     }
-                                  };
-                                  input.click();
-                                }}
-                                className="px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-full transition-transform active:scale-95 flex items-center gap-2 text-sm"
-                              >
-                                <Upload className="w-4 h-4" /> Import calendar
-                              </button>
-                              <button 
-                                onClick={async () => {
-                                  let url = prompt("Enter iCal Subscription URL (e.g. https://...):");
-                                  if (!url) return;
-                                  
-                                  let name = prompt("Enter a name for this subscription (e.g. Holidays):", "External Calendar");
-                                  if (!name) return;
-
-                                  try {
-                                    const client = new JmapClient(credentials);
-                                    // Default color for iCal is green-ish
-                                    const createdCal = await client.createCalendar(name, "#22c55e");
-                                    const newSub = {
-                                      id: Math.random().toString(36).substr(2),
-                                      url: url,
-                                      name: name,
-                                      color: "#22c55e",
-                                      calendarId: createdCal.id,
-                                      lastUpdated: Date.now()
-                                    };
-                                    
-                                    const updated = [...icalSubscriptions, newSub];
-                                    setICalSubscriptions(updated);
-                                    localStorage.setItem('webmail_ical_subscriptions', JSON.stringify(updated));
-                                    setCalendars(await client.getCalendars());
-                                    toast.success(`Subscribed to ${name} successfully! Note: Demo only, actual syncing not implemented.`);
-                                  } catch (err: any) {
-                                    toast.error(err.message || 'Failed to subscribe');
-                                  }
-                                }}
-                                className="px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-full transition-transform active:scale-95 flex items-center gap-2 text-sm"
-                              >
-                                <Globe className="w-4 h-4" /> Subscribe
-                              </button>
+                                  }}
+                                  className="p-2 text-slate-400 hover:text-red-500 rounded-lg transition-colors"
+                                  title="Delete calendar"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                             </div>
-                            
-                            {icalSubscriptions.length > 0 && (
-                              <div className="mt-8">
-                                <h3 className="font-bold mb-4 flex items-center gap-2 text-slate-800 dark:text-slate-200">
-                                  <Globe className="w-4 h-4 text-slate-400" />
-                                  iCal Subscriptions
-                                </h3>
-                                <div className="space-y-3">
-                                  {icalSubscriptions.map((sub, idx) => (
-                                    <div key={sub.id || idx} className="flex flex-col sm:flex-row sm:items-start justify-between p-4 bg-slate-50 dark:bg-[#111111] rounded-xl border border-slate-100 dark:border-[#222222]">
-                                      <div className="flex items-start gap-3">
-                                        <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-1" style={{ backgroundColor: sub.color || '#3b82f6' }}></div>
-                                        <Globe className="w-5 h-5 text-slate-400 shrink-0 mt-1" />
-                                        <div className="flex flex-col gap-1 min-w-0">
-                                          <span className="font-bold text-slate-700 dark:text-slate-200">{sub.name}</span>
-                                          <span className="text-xs text-indigo-500 dark:text-indigo-400 truncate max-w-[200px] sm:max-w-md">{sub.url}</span>
-                                          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide">Last updated: {format(new Date(sub.lastUpdated || Date.now()), "MMM d, yyyy, HH:mm")}</span>
-                                        </div>
-                                      </div>
-                                      <div className="flex items-center gap-1 sm:gap-2 mt-4 sm:mt-0">
-                                        <button
-                                          onClick={async () => {
-                                            if(confirm('Are you sure you want to unsubscribe from this calendar?')) {
-                                              try {
-                                                const client = new JmapClient(credentials);
-                                                await client.deleteCalendar(sub.calendarId);
-                                                const updated = icalSubscriptions.filter(s => s.id !== sub.id);
-                                                setICalSubscriptions(updated);
-                                                localStorage.setItem('webmail_ical_subscriptions', JSON.stringify(updated));
-                                                toast.success("Unsubscribed successfully");
-                                                setCalendars(await client.getCalendars());
-                                              } catch (err: any) {
-                                                toast.error(err.message || 'Failed to unsubscribe');
-                                              }
-                                            }
-                                          }}
-                                          className="p-2 text-slate-400 hover:text-red-500 rounded-lg transition-colors"
-                                          title="Unsubscribe"
-                                        >
-                                          <Trash2 className="w-4 h-4" />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ))}
+                          ))}
+                          {!calendars?.filter((c: any) => !icalSubscriptions.some(sub => sub.calendarId === c.id)).length && <div className="text-sm text-slate-500 py-2">No calendars found.</div>}
+                        </div>
+                        
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button 
+                            onClick={() => setIsAddCalendarOpen(true)}
+                            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-full shadow-sm transition-transform active:scale-95 flex items-center gap-2 text-sm"
+                          >
+                            <Plus className="w-4 h-4" /> Add calendar
+                          </button>
+                          <button 
+                            onClick={() => {
+                              const input = document.createElement('input');
+                              input.type = 'file';
+                              input.accept = '.ics';
+                              input.onchange = async (e: any) => {
+                                if (e.target.files && e.target.files.length > 0) {
+                                  try {
+                                    if (!credentials) return;
+                                    const file = e.target.files[0];
+                                    const text = await file.text();
+                                    const jcalData = ICAL.parse(text);
+                                    const comp = new ICAL.Component(jcalData);
+                                    const vevents = comp.getAllSubcomponents("vevent");
+                                    const client = new JmapClient(credentials);
+                                    
+                                    // Make sure we have a calendar to import to
+                                    let calendarId = calendars[0]?.id;
+                                    if (!calendarId) {
+                                      const newCal = await client.createCalendar("Imported Calendar", "#4f46e5");
+                                      calendarId = newCal.id;
+                                    }
+                                    
+                                    let count = 0;
+                                    for (const vevent of vevents) {
+                                      try {
+                                        const event = new ICAL.Event(vevent);
+                                        await client.createEvent({
+                                          title: event.summary,
+                                          description: event.description || "",
+                                          location: event.location || "",
+                                          virtualLocation: "",
+                                          startDate: format(event.startDate.toJSDate(), 'yyyy-MM-dd'),
+                                          startTime: format(event.startDate.toJSDate(), 'HH:mm'),
+                                          endDate: event.endDate ? format(event.endDate.toJSDate(), 'yyyy-MM-dd') : format(event.startDate.toJSDate(), 'yyyy-MM-dd'),
+                                          endTime: event.endDate ? format(event.endDate.toJSDate(), 'HH:mm') : format(event.startDate.toJSDate(), 'HH:mm'),
+                                          isAllDay: event.startDate.isDate,
+                                          timeZone: timezone,
+                                          recurrence: 'none',
+                                          calendarId: calendarId,
+                                          invitees: '',
+                                          reminder: 'none'
+                                        });
+                                        count++;
+                                      } catch (evErr) {}
+                                    }
+                                    toast.success(`Successfully imported ${count} events from ${file.name}`);
+                                    fetchCalendarsAndEvents();
+                                  } catch (error: any) {
+                                    toast.error(error.message || "Failed to parse ICS file");
+                                  }
+                                }
+                              };
+                              input.click();
+                            }}
+                            className="px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-full transition-transform active:scale-95 flex items-center gap-2 text-sm"
+                          >
+                            <Upload className="w-4 h-4" /> Import calendar
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-emerald-100 dark:bg-emerald-500/10 rounded-xl">
+                            <Globe className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                          </div>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">iCal Subscriptions</h2>
+                        </div>
+                        
+                        <div className="space-y-4 mb-6">
+                          {icalSubscriptions.map((sub, idx) => (
+                            <div key={sub.id || idx} className="flex flex-col sm:flex-row sm:items-start justify-between p-4 bg-slate-50 dark:bg-[#111111] rounded-xl border border-slate-100 dark:border-[#222222]">
+                              <div className="flex items-start gap-3">
+                                <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-1" style={{ backgroundColor: sub.color || '#22c55e' }}></div>
+                                <Globe className="w-5 h-5 text-slate-400 shrink-0 mt-1" />
+                                <div className="flex flex-col gap-1 min-w-0">
+                                  <span className="font-bold text-slate-700 dark:text-slate-200">{sub.name}</span>
+                                  <span className="text-xs text-indigo-500 dark:text-indigo-400 truncate max-w-[200px] sm:max-w-md">{sub.url}</span>
+                                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide">Last updated: {format(new Date(sub.lastUpdated || Date.now()), "MMM d, yyyy, HH:mm")}</span>
                                 </div>
                               </div>
-                            )}
-                          </div>
+                              <div className="flex items-center gap-1 sm:gap-2 mt-4 sm:mt-0">
+                                <button
+                                  onClick={async () => {
+                                    if(confirm('Are you sure you want to unsubscribe from this calendar?')) {
+                                      try {
+                                        if (!sub.isVirtual && credentials) {
+                                          try {
+                                            const client = new JmapClient(credentials);
+                                            await client.deleteCalendar(sub.calendarId);
+                                          } catch (e) {
+                                            console.warn("Could not delete from JMAP, ignoring...", e);
+                                          }
+                                        }
+                                        const updated = icalSubscriptions.filter(s => s.id !== sub.id);
+                                        setICalSubscriptions(updated);
+                                        localStorage.setItem('webmail_ical_subscriptions', JSON.stringify(updated));
+                                        toast.success("Unsubscribed successfully");
+                                        fetchCalendarsAndEvents();
+                                      } catch (err: any) {
+                                        toast.error(err.message || 'Failed to unsubscribe');
+                                      }
+                                    }
+                                  }}
+                                  className="p-2 text-slate-400 hover:text-red-500 rounded-lg transition-colors"
+                                  title="Unsubscribe"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          {!icalSubscriptions.length && <div className="text-sm text-slate-500 p-2">No active subscriptions.</div>}
                         </div>
+
+                        <button 
+                          onClick={() => {
+                            setIsAddSubscriptionOpen(true);
+                            setNewSubscriptionUrl("");
+                            setNewSubscriptionName("");
+                            setNewSubscriptionColor("#22c55e");
+                          }}
+                          className="px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-full transition-transform active:scale-95 flex items-center gap-2 text-sm"
+                        >
+                          <Globe className="w-4 h-4" /> Add subscription
+                        </button>
                       </div>
                     </div>
                   )}
@@ -8043,16 +9187,17 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       )}
 
       {isContactModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md sm:rounded-3xl rounded-t-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col h-[90vh] sm:h-auto sm:max-h-[90vh] overflow-hidden animate-in sm:fade-in sm:zoom-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 duration-200">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
               <h2 className="text-xl font-bold text-slate-900 dark:text-white">Create Contact</h2>
               <button onClick={() => setIsContactModalOpen(false)} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors">
                 <X className="w-5 h-5 text-slate-500" />
               </button>
             </div>
-            <form onSubmit={handleCreateContact} className="p-6 space-y-4">
-              <div className="flex items-center justify-center mb-6">
+            <form onSubmit={handleCreateContact} className="flex flex-col flex-1 min-h-0">
+              <div className="flex-1 min-h-0 p-6 space-y-4 overflow-y-auto custom-scrollbar">
+                <div className="flex items-center justify-center mb-6">
                 <div className="relative group cursor-pointer">
                   {newContact.photoUrl ? (
                     <img src={newContact.photoUrl} alt="Contact" className="w-24 h-24 rounded-full object-cover border-4 border-white dark:border-slate-800 shadow-lg" />
@@ -8170,6 +9315,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-transparent focus:bg-white dark:focus:bg-slate-700 focus:ring-2 focus:ring-indigo-500/20 rounded-xl text-sm outline-none transition-all dark:text-white"
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Birthday</label>
+                  <input 
+                    type="date" 
+                    value={newContact.birthday}
+                    onChange={e => setNewContact({...newContact, birthday: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-transparent focus:bg-white dark:focus:bg-slate-700 focus:ring-2 focus:ring-indigo-500/20 rounded-xl text-sm outline-none transition-all dark:text-white [&::-webkit-calendar-picker-indicator]:dark:invert"
+                  />
+                </div>
               </div>
               
               <div className="space-y-1">
@@ -8181,8 +9335,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                   className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-transparent focus:bg-white dark:focus:bg-slate-700 focus:ring-2 focus:ring-indigo-500/20 rounded-xl text-sm outline-none transition-all dark:text-white resize-none min-h-[80px]"
                 />
               </div>
+              </div>
 
-              <div className="pt-4 flex gap-3">
+              <div className="p-6 border-t border-slate-100 dark:border-slate-800 shrink-0 flex gap-3 bg-white dark:bg-slate-900">
                 <button 
                   type="button"
                   onClick={() => setIsContactModalOpen(false)}
@@ -8266,6 +9421,105 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 <button type="button" onClick={() => { setIsAddCalendarOpen(false); setNewCalendarName(""); }} className="px-5 py-2.5 font-bold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-sm">Cancel</button>
                 <button type="submit" disabled={!newCalendarName.trim()} className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold rounded-lg transition-all shadow-sm flex items-center justify-center text-sm">
                   Create
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isAddSubscriptionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-[#1C1C1C] w-full max-w-sm rounded-[24px] shadow-2xl border border-slate-200 dark:border-[#333333] overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="px-6 pt-6 pb-4">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">Add iCal Subscription</h2>
+            </div>
+            <form className="px-6 pb-6 space-y-5" onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newSubscriptionUrl.trim() || !newSubscriptionName.trim()) return;
+
+              try {
+                const subId = Math.random().toString(36).substr(2);
+                const newSub = {
+                  id: subId,
+                  url: newSubscriptionUrl.trim().replace(/^webcal:\/\//i, 'https://'),
+                  name: newSubscriptionName.trim(),
+                  color: newSubscriptionColor,
+                  calendarId: `extcal-${subId}`,
+                  lastUpdated: Date.now(),
+                  isVirtual: true
+                };
+                
+                const updated = [...icalSubscriptions, newSub];
+                setICalSubscriptions(updated);
+                localStorage.setItem('webmail_ical_subscriptions', JSON.stringify(updated));
+                
+                toast.success(`Subscribed to ${newSub.name} successfully! Calendar is syncing.`);
+                
+                setIsAddSubscriptionOpen(false);
+                setNewSubscriptionUrl("");
+                setNewSubscriptionName("");
+                setNewSubscriptionColor("#22c55e");
+                
+                fetchCalendarsAndEvents();
+              } catch (err: any) {
+                toast.error(err.message || 'Failed to subscribe');
+              }
+            }}>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-[#888888] uppercase tracking-wider mb-2 block">Subscription URL</label>
+                  <input
+                    type="text"
+                    required
+                    value={newSubscriptionUrl}
+                    onChange={(e) => setNewSubscriptionUrl(e.target.value)}
+                    placeholder="https://.../*.ics"
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-[#111111] border border-slate-200 dark:border-[#333333] rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 dark:text-white transition-all text-sm font-medium"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-[#888888] uppercase tracking-wider mb-2 block">Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={newSubscriptionName}
+                    onChange={(e) => setNewSubscriptionName(e.target.value)}
+                    placeholder="e.g. Holidays, Work"
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-[#111111] border border-slate-200 dark:border-[#333333] rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 dark:text-white transition-all text-sm font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-[#888888] uppercase tracking-wider mb-2 block">Color</label>
+                  <div className="grid grid-cols-7 gap-3">
+                    {[
+                      "#ef4444", "#f97316", "#f59e0b", "#84cc16", "#22c55e", "#10b981", "#14b8a6",
+                      "#06b6d4", "#0ea5e9", "#3b82f6", "#4f46e5", "#8b5cf6", "#a855f7", "#d946ef",
+                      "#ec4899", "#f43f5e", "#b91c1c", "#c2410c", "#4d7c0f", "#0f766e"
+                    ].map((hex) => (
+                      <button
+                        key={hex}
+                        type="button"
+                        onClick={() => setNewSubscriptionColor(hex)}
+                        className="w-7 h-7 rounded-full flex items-center justify-center relative cursor-pointer group transition-transform active:scale-90"
+                        style={{ backgroundColor: hex }}
+                      >
+                        {newSubscriptionColor === hex && (
+                          <div className="w-1.5 h-1.5 bg-white rounded-full mx-auto" />
+                        )}
+                      </button>
+                    ))}
+                    <button type="button" className="w-7 h-7 rounded-full flex items-center justify-center bg-slate-100 mt-0 hover:bg-slate-200 dark:bg-[#222222] dark:hover:bg-[#333333] transition-colors">
+                      <Plus className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="pt-2 flex justify-end gap-3">
+                <button type="button" onClick={() => { setIsAddSubscriptionOpen(false); setNewSubscriptionUrl(""); setNewSubscriptionName(""); setNewSubscriptionColor("#22c55e"); }} className="px-5 py-2.5 font-bold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-sm">Cancel</button>
+                <button type="submit" disabled={!newSubscriptionUrl.trim() || !newSubscriptionName.trim()} className="px-5 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-bold rounded-lg transition-all shadow-sm flex items-center justify-center text-sm">
+                  Subscribe
                 </button>
               </div>
             </form>
@@ -8885,9 +10139,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
 
       {/* Contact View/Edit Modal */}
       {selectedContact && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+        <div className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md sm:rounded-3xl rounded-t-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col h-[90vh] sm:h-auto sm:max-h-[90vh] overflow-hidden animate-in sm:fade-in sm:zoom-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 duration-200">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0">
               <h2 className="text-xl font-bold text-slate-900 dark:text-white">
                 {isEditingContact ? "Edit Contact" : "Contact Details"}
               </h2>
@@ -8896,7 +10150,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
               </button>
             </div>
 
-            <div className="p-8 space-y-6">
+            <div className="flex-1 min-h-0 p-6 sm:p-8 space-y-6 overflow-y-auto custom-scrollbar">
               <div className="flex flex-col items-center gap-4 text-center">
                 <div className="relative group cursor-pointer" onClick={() => {
                   if (isEditingContact) {
@@ -8974,6 +10228,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none"
                       />
                     </div>
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1 mb-1 block">Birthday</label>
+                      <input 
+                        type="date"
+                        value={editingContactData?.birthday || ""}
+                        onChange={(e) => setEditingContactData({...editingContactData, birthday: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none [&::-webkit-calendar-picker-indicator]:dark:invert"
+                      />
+                    </div>
                   </>
                 ) : (
                   <>
@@ -9001,6 +10264,20 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       </div>
                     )}
 
+                    {editingContactData?.birthday && (
+                      <div className="flex gap-4">
+                        <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center shrink-0">
+                          <span className="text-xl">🎂</span>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Birthday</div>
+                          <div className="text-slate-900 dark:text-white font-bold text-lg truncate">
+                            {editingContactData.birthday}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {selectedContact.notes && (
                       <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-700">
                         <div className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-3">Notes</div>
@@ -9011,8 +10288,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 )}
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-3 pt-4">
-                {isEditingContact ? (
+            <div className="flex flex-col sm:flex-row gap-3 p-6 border-t border-slate-100 dark:border-slate-800 shrink-0 bg-white dark:bg-slate-900">
+              {isEditingContact ? (
                   <>
                     <button 
                       onClick={() => setIsEditingContact(false)}

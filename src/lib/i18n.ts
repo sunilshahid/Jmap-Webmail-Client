@@ -23,7 +23,7 @@ export const translations: Record<string, Record<string, string>> = {
     "newTemplate": "New Template", "enableAutoReply": "Enable Auto-Reply", "automaticallyReply": "Automatically reply to incoming emails",
     "outOfOffice": "Out of Office", "startDateOptional": "Start Date (Optional)", "endDateOptional": "End Date (Optional)",
     "body": "Body", "iAmCurrentlyAway": "I am currently away...", "autoResponder": "Auto-Responder", "emailIdentities": "Email Identities",
-    "updateResponder": "Update Responder", "default": "DEFAULT", "filtersAndRules": "Filters & Rules"
+    "updateResponder": "Update Responder", "default": "DEFAULT", "filtersAndRules": "Filters & Rules", "identities": "Identities"
   },
   "English (UK)": {
     "mail": "Mail", "contacts": "Contacts", "calendar": "Calendar", "settings": "Settings",
@@ -48,7 +48,7 @@ export const translations: Record<string, Record<string, string>> = {
     "newTemplate": "New Template", "enableAutoReply": "Enable Auto-Reply", "automaticallyReply": "Automatically reply to incoming emails",
     "outOfOffice": "Out of Office", "startDateOptional": "Start Date (Optional)", "endDateOptional": "End Date (Optional)",
     "body": "Body", "iAmCurrentlyAway": "I am currently away...", "autoResponder": "Auto-Responder", "emailIdentities": "Email Identities",
-    "updateResponder": "Update Responder", "default": "DEFAULT", "filtersAndRules": "Filters & Rules"
+    "updateResponder": "Update Responder", "default": "DEFAULT", "filtersAndRules": "Filters & Rules", "identities": "Identities"
   },
   "Spanish": {
     "mail": "Correo", "contacts": "Contactos", "calendar": "Calendario", "settings": "Ajustes",
@@ -76,7 +76,7 @@ export const translations: Record<string, Record<string, string>> = {
     "automaticallyReply": "Responder automáticamente a correos electrónicos entrantes", "outOfOffice": "Fuera de la oficina",
     "startDateOptional": "Fecha de inicio (Opcional)", "endDateOptional": "Fecha de fin (Opcional)", "body": "Cuerpo del mensaje", "iAmCurrentlyAway": "Actualmente estoy ausente...",
     "autoResponder": "Respuesta automática", "emailIdentities": "Identidades de correo", "updateResponder": "Actualizar Respuesta Automática", "default": "PREDETERMINADO",
-    "filtersAndRules": "Filtros y Reglas"
+    "filtersAndRules": "Filtros y Reglas", "identities": "Identidades"
   },
   "French": {
     "mail": "Courrier", "contacts": "Contacts", "calendar": "Calendrier", "settings": "Paramètres",
@@ -105,7 +105,7 @@ export const translations: Record<string, Record<string, string>> = {
     "automaticallyReply": "Répondre automatiquement aux e-mails entrants", "outOfOffice": "Absence du bureau",
     "startDateOptional": "Date de début (Facultatif)", "endDateOptional": "Date de fin (Facultatif)", "body": "Le Message", "iAmCurrentlyAway": "Je suis actuellement absent...",
     "autoResponder": "Réponse Automatique", "emailIdentities": "Identités Email", "updateResponder": "Mettre à jour", "default": "DÉFAUT",
-    "filtersAndRules": "Filtres et Règles"
+    "filtersAndRules": "Filtres et Règles", "identities": "Identités"
   },
   "German": {
     "mail": "E-Mail", "contacts": "Kontakte", "calendar": "Kalender", "settings": "Einstellungen",
@@ -133,7 +133,7 @@ export const translations: Record<string, Record<string, string>> = {
     "automaticallyReply": "Eingehende E-Mails automatisch beantworten", "outOfOffice": "Abwesenheitsnotiz",
     "startDateOptional": "Startdatum (Optional)", "endDateOptional": "Enddatum (Optional)", "body": "Nachricht", "iAmCurrentlyAway": "Ich bin derzeit nicht erreichbar...",
     "autoResponder": "Automatische Antwort", "emailIdentities": "E-Mail Identitäten", "updateResponder": "Antwort aktualisieren", "default": "STANDARD",
-    "filtersAndRules": "Filter & Regeln"
+    "filtersAndRules": "Filter & Regeln", "identities": "Identitäten"
   },
   "Italian": {
     "mail": "Posta", "contacts": "Contatti", "calendar": "Calendario", "settings": "Impostazioni",
@@ -161,7 +161,7 @@ export const translations: Record<string, Record<string, string>> = {
     "automaticallyReply": "Rispondi automaticamente alle email in arrivo", "outOfOffice": "Fuori ufficio",
     "startDateOptional": "Data inizio (Opzionale)", "endDateOptional": "Data fine (Opzionale)", "body": "Testo", "iAmCurrentlyAway": "Al momento sono assente...",
     "autoResponder": "Risposta Automatica", "emailIdentities": "Identità Email", "updateResponder": "Aggiorna Risposta", "default": "PREDEFINITO",
-    "filtersAndRules": "Filtri e Regole"
+    "filtersAndRules": "Filtri e Regole", "identities": "Identità"
   },
   "Chinese": {
     "mail": "邮件", "contacts": "联系人", "calendar": "日历", "settings": "设置",
@@ -189,7 +189,7 @@ export const translations: Record<string, Record<string, string>> = {
     "automaticallyReply": "自动回复收到的邮件", "outOfOffice": "外出",
     "startDateOptional": "开始日期（可选）", "endDateOptional": "结束日期（可选）", "body": "正文", "iAmCurrentlyAway": "我现在不在...",
     "autoResponder": "自动回复", "emailIdentities": "邮件身份", "updateResponder": "更新自动回复", "default": "默认",
-    "filtersAndRules": "筛选和规则"
+    "filtersAndRules": "筛选和规则", "identities": "身份"
   },
   "Japanese": {
     "mail": "メール", "contacts": "連絡先", "calendar": "カレンダー", "settings": "設定",
@@ -217,7 +217,7 @@ export const translations: Record<string, Record<string, string>> = {
     "automaticallyReply": "受信したメールに自動返信する", "outOfOffice": "不在通知",
     "startDateOptional": "開始日（任意）", "endDateOptional": "終了日（任意）", "body": "本文", "iAmCurrentlyAway": "現在不在にしています...",
     "autoResponder": "自動返信", "emailIdentities": "メールのID", "updateResponder": "自動返信を更新", "default": "デフォルト",
-    "filtersAndRules": "フィルタとルール"
+    "filtersAndRules": "フィルタとルール", "identities": "アイデンティティ"
   }
 };
 

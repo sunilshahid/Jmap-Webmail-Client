@@ -213,7 +213,28 @@ async function startServer() {
     }
   });
 
-  // JMAP API Proxy
+  // iCal fetch proxy
+  app.get("/api/ical", async (req, res) => {
+    try {
+      const url = req.query.url as string;
+      if (!url) {
+        return res.status(400).json({ error: "Missing url parameter" });
+      }
+      
+      const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 webmail' }});
+      if (!response.ok) {
+        throw new Error(`Failed to fetch iCal: ${response.status} ${response.statusText}`);
+      }
+      const text = await response.text();
+      res.set('Content-Type', 'text/calendar');
+      res.send(text);
+    } catch (err: any) {
+      console.error('iCal fetch error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // JMAP api proxy
   app.post("/api/jmap/api", async (req, res) => {
     const { serverUrl, apiUrl, username, password, payload } = req.body;
 

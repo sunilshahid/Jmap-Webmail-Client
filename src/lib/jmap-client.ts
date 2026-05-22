@@ -409,7 +409,7 @@ export class JmapClient {
     });
   }
 
-  async getEmails(mailboxId: string | null, limit: number = 50, position: number = 0, keyword?: string): Promise<Email[]> {
+  async getEmails(mailboxId: string | null, limit: number = 50, position: number = 0, keyword?: string, collapseThreads: boolean = true): Promise<Email[]> {
     const filterParams: any = {};
     if (mailboxId) {
       filterParams.inMailbox = mailboxId;
@@ -423,6 +423,7 @@ export class JmapClient {
         accountId: this.account.accountId,
         filter: Object.keys(filterParams).length > 0 ? filterParams : undefined,
         sort: [{ property: "receivedAt", isAscending: false }],
+        collapseThreads: collapseThreads,
         position: position,
         limit: limit
       }, "0"],
@@ -909,7 +910,7 @@ export class JmapClient {
     }
   }
 
-  async createContact(contactData: { firstName: string, lastName?: string, email: string, emailType?: string, phone?: string, phoneType?: string, notes?: string, avatarUrl?: string, organization?: string }): Promise<Contact> {
+  async createContact(contactData: { firstName: string, lastName?: string, email: string, emailType?: string, phone?: string, phoneType?: string, notes?: string, avatarUrl?: string, organization?: string, birthday?: string }): Promise<Contact> {
     const caps = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"];
     const contactAccountId = this.account.primaryAccounts?.["urn:ietf:params:jmap:contacts"] || this.account.accountId || "p";
     
@@ -920,7 +921,7 @@ export class JmapClient {
     const addressBooks = abData?.methodResponses?.[0]?.[1]?.list || [];
     const addressBookId = addressBooks.length > 0 ? addressBooks[0].id : "b";
 
-    const { firstName, lastName, email, emailType, phone, phoneType, notes, avatarUrl, organization } = contactData;
+    const { firstName, lastName, email, emailType, phone, phoneType, notes, avatarUrl, organization, birthday } = contactData;
 
     const contactPayload: any = {
       "@type": "Card",
@@ -948,6 +949,17 @@ export class JmapClient {
     if (avatarUrl) {
       contactPayload.photos = {
         "ph1": { url: avatarUrl }
+      };
+    }
+    if (organization) {
+      contactPayload.organizations = {
+        "o1": { name: organization }
+      };
+    }
+    if (birthday) {
+      // birthday format YYYY-MM-DD or --MM-DD
+      contactPayload.anniversaries = {
+        "a1": { kind: "birth", date: birthday }
       };
     }
     if (organization) {
