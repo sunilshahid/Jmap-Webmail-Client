@@ -5,7 +5,7 @@ import {
   Reply, Forward, X, Edit3, Mail, LogOut, Loader2, Server,
   Calendar, Users, RefreshCw, Lock, Clock, Key, Shield, Plus, ExternalLink,
   Sparkles, Download, Upload, Bell, Check, MailCheck, Sun, Filter, ArrowLeft, Paperclip,
-  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile, Camera, Globe, Video, MapPin, Link, Copy, BookOpen
+  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile, Camera, Globe, Video, MapPin, Link, Copy, BookOpen, Webhook, Terminal
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "./lib/utils";
@@ -914,10 +914,53 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [eventErrors, setEventErrors] = useState<Record<string, string>>({});
   const [contactSearchQuery, setContactSearchQuery] = useState("");
   const [eventSearchQuery, setEventSearchQuery] = useState("");
-  const [isSettingsSection, setIsSettingsSection] = useState<'general' | 'account' | 'security' | 'advanced' | 'notifications' | 'vacation' | 'templates' | 'filters' | 'contacts' | 'tags' | 'calendar' | 'folders' | 'identities' | 'read' | 'compose'>(() => {
+  const [isSettingsSection, setIsSettingsSection] = useState<'general' | 'account' | 'security' | 'advanced' | 'notifications' | 'vacation' | 'templates' | 'filters' | 'contacts' | 'tags' | 'calendar' | 'folders' | 'identities' | 'read' | 'compose' | 'api'>(() => {
     return (localStorage.getItem('webmail_settings_section') as any) || 'account';
   });
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
+  const [apiKeys, setApiKeys] = useState<{id: string, key?: string, name: string, createdAt: number}[]>([]);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+
+  useEffect(() => {
+    if (activeApp === 'settings' && isSettingsSection === 'api') {
+      fetch('/api/keys')
+        .then(res => res.json())
+        .then(data => setApiKeys(data))
+        .catch(err => console.error(err));
+    }
+  }, [activeApp, isSettingsSection]);
+
+  const handleCreateApiKey = async () => {
+    if (!newKeyName.trim()) return;
+    setIsGeneratingKey(true);
+    try {
+      const res = await fetch('/api/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newKeyName })
+      });
+      const data = await res.json();
+      setApiKeys(prev => [data, ...prev]);
+      setNewKeyName("");
+      toast.success("API Key generated");
+    } catch (e) {
+      toast.error("Failed to generate key");
+    } finally {
+      setIsGeneratingKey(false);
+    }
+  };
+
+  const handleRevokeApiKey = async (id: string) => {
+    try {
+      await fetch(`/api/keys/${id}`, { method: 'DELETE' });
+      setApiKeys(prev => prev.filter(k => k.id !== id));
+      toast.success("API Key revoked");
+    } catch (e) {
+      toast.error("Failed to revoke key");
+    }
+  };
+
   const [vacationEnabled, setVacationEnabled] = useState(false);
   const [vacationSubject, setVacationSubject] = useState("");
   const [vacationText, setVacationText] = useState("");
@@ -6153,6 +6196,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     { id: 'filters', icon: Filter },
                     { id: 'security', icon: Shield },
                     { id: 'advanced', icon: Key },
+                    { id: 'api', icon: Webhook },
                   ].map((item) => (
                     <button 
                       key={item.id}
@@ -6195,7 +6239,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                      isSettingsSection === 'contacts' ? t(language, 'contacts') : 
                      isSettingsSection === 'calendar' ? 'Calendar' :
                      isSettingsSection === 'folders' ? t(language, 'folders') : 
-                     isSettingsSection === 'filters' ? t(language, 'filters') : t(language, 'advanced')}
+                     isSettingsSection === 'filters' ? t(language, 'filters') : 
+                     isSettingsSection === 'api' ? 'API & Integrations' : t(language, 'advanced')}
                   </h1>
                   <button 
                     onClick={() => setIsSettingsMenuOpen(true)}
@@ -6214,7 +6259,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                      isSettingsSection === 'contacts' ? t(language, 'contacts') : 
                      isSettingsSection === 'calendar' ? 'Calendar' :
                      isSettingsSection === 'folders' ? t(language, 'folders') : 
-                     isSettingsSection === 'filters' ? t(language, 'filters') : t(language, 'advanced')}
+                     isSettingsSection === 'filters' ? t(language, 'filters') : 
+                     isSettingsSection === 'api' ? 'API & Integrations' : t(language, 'advanced')}
                     <ChevronDown className="w-4 h-4" />
                   </button>
                 </div>
@@ -6247,6 +6293,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           { id: 'filters', icon: Filter },
                           { id: 'security', icon: Shield },
                           { id: 'advanced', icon: Key },
+                          { id: 'api', icon: Webhook },
                         ].map((item) => (
                           <button 
                             key={item.id}
@@ -8094,6 +8141,96 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       >
                         <LogOut className="w-5 h-5" /> Sign Out
                       </button>
+                    </div>
+                  )}
+
+                  {isSettingsSection === 'api' && (
+                    <div className="grid gap-6">
+                      <div className="bg-white dark:bg-[#050505] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
+                            <Webhook className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                          </div>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">API & Integrations</h2>
+                        </div>
+                        
+                        <div className="space-y-6">
+                          <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+                            Generate API keys to connect external applications, such as a mobile app, to your Secure Mail backend. API keys allow external clients to securely send encrypted messages.
+                          </p>
+                          
+                          <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+                            <input 
+                              type="text"
+                              value={newKeyName}
+                              onChange={e => setNewKeyName(e.target.value)}
+                              placeholder="Key name (e.g., Android App)"
+                              className="flex-1 bg-white dark:bg-[#050505] border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-2.5 text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+                              onKeyDown={e => e.key === 'Enter' && handleCreateApiKey()}
+                            />
+                            <button
+                              onClick={handleCreateApiKey}
+                              disabled={isGeneratingKey || !newKeyName.trim()}
+                              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-sm transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 whitespace-nowrap"
+                            >
+                              {isGeneratingKey && <Loader2 className="w-4 h-4 animate-spin" />}
+                              Generate Key
+                            </button>
+                          </div>
+
+                          <div className="space-y-3">
+                            <h3 className="font-bold text-slate-900 dark:text-white mb-4">Active API Keys</h3>
+                            {apiKeys.length === 0 ? (
+                              <div className="text-center py-6 text-sm text-slate-500 bg-slate-50 dark:bg-slate-900/30 rounded-xl border border-slate-100 dark:border-slate-800">
+                                No API keys generated yet.
+                              </div>
+                            ) : (
+                              apiKeys.map(key => (
+                                <div key={key.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
+                                  <div>
+                                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                                      {key.name}
+                                      {key.key && <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">New</span>}
+                                    </div>
+                                    <div className="text-xs text-slate-500 mt-1">Created {formatDistanceToNow(new Date(key.createdAt), { addSuffix: true })}</div>
+                                    {key.key && (
+                                      <div className="mt-3 p-3 bg-slate-50 dark:bg-black rounded-lg font-mono text-sm break-all text-slate-800 dark:text-slate-200 border border-indigo-100 dark:border-indigo-900" onClick={() => { navigator.clipboard.writeText(key.key!); toast.success('API Key copied to clipboard'); }}>
+                                        {key.key}
+                                        <div className="text-xs text-indigo-500 font-sans mt-2">Copy this key now. You won't be able to see it again!</div>
+                                      </div>
+                                    )}
+                                  </div>
+                                  <button
+                                    onClick={() => handleRevokeApiKey(key.id)}
+                                    className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors self-start sm:self-center shrink-0"
+                                    title="Revoke Key"
+                                  >
+                                    <Trash2 className="w-5 h-5" />
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-white dark:bg-[#050505] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <Terminal className="w-5 h-5 text-slate-500" />
+                          <h2 className="text-lg font-bold text-slate-900 dark:text-white">API Usage Example</h2>
+                        </div>
+                        <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl font-mono text-[13px] text-slate-800 dark:text-slate-300 overflow-x-auto whitespace-pre">
+                          <span className="text-indigo-600 dark:text-indigo-400">POST</span> /api/v1/secure-message{'\n'}
+                          <span className="text-blue-600 dark:text-blue-400">Authorization:</span> Bearer <span className="text-emerald-600 dark:text-emerald-400">{(apiKeys.length > 0 && apiKeys[0].key) ? apiKeys[0].key : 'sk_your_api_key'}</span>{'\n\n'}
+                          <span className="text-slate-500">{`{`}</span>{'\n'}
+                          {`  "encryptedPayload": "...", \n`}
+                          {`  "iv": "...", \n`}
+                          {`  "salt": "...", \n`}
+                          {`  "expiration": "1week", \n`}
+                          {`  "viewOnce": false \n`}
+                          <span className="text-slate-500">{`}`}</span>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>

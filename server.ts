@@ -140,6 +140,68 @@ async function startServer() {
     res.json({ success: found });
   });
 
+  // API Keys (In-Memory)
+  interface ApiKey {
+    id: string;
+    key: string;
+    name: string;
+    createdAt: number;
+  }
+  const apiKeys = new Map<string, ApiKey>();
+
+  app.get("/api/keys", (req, res) => {
+    res.json(Array.from(apiKeys.values()).map(k => ({ id: k.id, name: k.name, createdAt: k.createdAt })));
+  });
+
+  app.post("/api/keys", (req, res) => {
+    const { name } = req.body;
+    const id = crypto.randomUUID();
+    const key = "sk_" + crypto.randomBytes(24).toString('hex');
+    apiKeys.set(id, { id, key, name, createdAt: Date.now() });
+    res.json({ id, key, name, createdAt: Date.now() });
+  });
+
+  app.delete("/api/keys/:id", (req, res) => {
+    apiKeys.delete(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.post("/api/v1/secure-message", (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing or invalid Authorization header" });
+    }
+    const token = authHeader.split(" ")[1];
+    const isValid = Array.from(apiKeys.values()).some(k => k.key === token);
+    if (!isValid) return res.status(401).json({ error: "Invalid API Key" });
+
+    const { encryptedPayload, iv, salt, expiration, viewOnce } = req.body;
+    if (!encryptedPayload || !iv || !salt) {
+       return res.status(400).json({ error: "Missing required encryption fields: encryptedPayload, iv, salt" });
+    }
+    
+    const id = crypto.randomUUID();
+    let ttl = 24 * 60 * 60 * 1000;
+    if (expiration === '5min') ttl = 5 * 60 * 1000;
+    else if (expiration === '1hour') ttl = 60 * 60 * 1000;
+    else if (expiration === '1week') ttl = 7 * 24 * 60 * 60 * 1000;
+    else if (expiration === 'burn') ttl = 30 * 24 * 60 * 60 * 1000;
+
+    secureStore.set(id, {
+      encryptedPayload,
+      iv,
+      salt,
+      expiresAt: Date.now() + ttl,
+      viewOnce: viewOnce || expiration === 'burn'
+    });
+
+    const host = req.get('host');
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const url = `${protocol}://${host}/secure/${id}`;
+
+    res.json({ url, id, expiresAt: Date.now() + ttl });
+  });
+
   app.post("/api/secure-store", (req, res) => {
     const { encryptedPayload, iv, salt, expiration, viewOnce } = req.body;
     const id = crypto.randomUUID();
