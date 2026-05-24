@@ -22,6 +22,10 @@
     background-color: #000000 !important;
     color: #f8fafc !important;
   }
+
+  html, body {
+    overflow-x: hidden;
+  }
 }
 
 @utility custom-scrollbar {

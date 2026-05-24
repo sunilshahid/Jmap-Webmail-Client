@@ -6206,7 +6206,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                         isSettingsSection === item.id ? "bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900"
                       )}
                     >
-                      <item.icon className="w-4 h-4" /> {t(language, item.id)}
+                      <item.icon className="w-4 h-4" /> {item.id === 'api' ? 'API' : t(language, item.id)}
                     </button>
                   ))}
                 </nav>
@@ -6240,7 +6240,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                      isSettingsSection === 'calendar' ? 'Calendar' :
                      isSettingsSection === 'folders' ? t(language, 'folders') : 
                      isSettingsSection === 'filters' ? t(language, 'filters') : 
-                     isSettingsSection === 'api' ? 'API & Integrations' : t(language, 'advanced')}
+                     isSettingsSection === 'api' ? 'API' : t(language, 'advanced')}
                   </h1>
                   <button 
                     onClick={() => setIsSettingsMenuOpen(true)}
@@ -6260,7 +6260,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                      isSettingsSection === 'calendar' ? 'Calendar' :
                      isSettingsSection === 'folders' ? t(language, 'folders') : 
                      isSettingsSection === 'filters' ? t(language, 'filters') : 
-                     isSettingsSection === 'api' ? 'API & Integrations' : t(language, 'advanced')}
+                     isSettingsSection === 'api' ? 'API' : t(language, 'advanced')}
                     <ChevronDown className="w-4 h-4" />
                   </button>
                 </div>
@@ -6306,7 +6306,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             <div className="flex items-center gap-4">
                               <item.icon className={cn("w-5 h-5", isSettingsSection === item.id ? "text-indigo-600 dark:text-indigo-400" : "text-slate-500")} />
                               <span className={cn("text-lg", isSettingsSection === item.id ? "font-bold text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400")}>
-                                {t(language, item.id)}
+                                {item.id === 'api' ? 'API' : t(language, item.id)}
                               </span>
                             </div>
                             {isSettingsSection === item.id && (
@@ -8151,7 +8151,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
                             <Webhook className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                           </div>
-                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">API & Integrations</h2>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">API</h2>
                         </div>
                         
                         <div className="space-y-6">
@@ -8219,8 +8219,15 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <Terminal className="w-5 h-5 text-slate-500" />
                           <h2 className="text-lg font-bold text-slate-900 dark:text-white">API Usage Example</h2>
                         </div>
-                        <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl font-mono text-[13px] text-slate-800 dark:text-slate-300 overflow-x-auto whitespace-pre">
-                          <span className="text-indigo-600 dark:text-indigo-400">POST</span> /api/v1/secure-message{'\n'}
+                        <div className="mb-4 p-4 bg-indigo-50/50 dark:bg-indigo-500/10 border border-indigo-100 dark:border-indigo-500/20 rounded-xl">
+                          <div className="text-sm font-medium text-indigo-900 dark:text-indigo-100 mb-1">Self-Recognition Endpoint</div>
+                          <div className="text-xs text-indigo-700/80 dark:text-indigo-300/80 mb-2">Current domain configuration for REST API calls:</div>
+                          <div className="text-xs font-mono text-indigo-800 dark:text-indigo-300 font-bold break-all bg-white dark:bg-[#000] p-2 rounded-lg border border-indigo-100 dark:border-indigo-500/30">
+                            {window.location.origin}
+                          </div>
+                        </div>
+                        <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl font-mono text-[13px] text-slate-800 dark:text-slate-300 whitespace-pre-wrap break-all">
+                          <span className="text-indigo-600 dark:text-indigo-400">POST</span> {window.location.origin}/api/v1/secure-message{'\n'}
                           <span className="text-blue-600 dark:text-blue-400">Authorization:</span> Bearer <span className="text-emerald-600 dark:text-emerald-400">{(apiKeys.length > 0 && apiKeys[0].key) ? apiKeys[0].key : 'sk_your_api_key'}</span>{'\n\n'}
                           <span className="text-slate-500">{`{`}</span>{'\n'}
                           {`  "encryptedPayload": "...", \n`}
