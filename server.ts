@@ -1,16 +1,24 @@
 import express from "express";
+import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import crypto from "crypto";
 import { WebSocketServer, WebSocket as NodeWebSocket } from "ws";
+import { setGlobalDispatcher, Agent } from "undici";
 
-// Allow self-signed certificates for downstream JMAP server connections
+// Allow self-signed certificates for downstream JMAP server connections globally for Node 18+ internal fetch
+setGlobalDispatcher(new Agent({
+  connect: {
+    rejectUnauthorized: false
+  }
+}));
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  app.use(cors({ origin: true, credentials: true }));
   app.use(express.json({ limit: '50mb' }));
 
   // Secure Message Store (In-Memory)
