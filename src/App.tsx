@@ -15,33 +15,10 @@ import { JmapClient } from "./lib/jmap-client";
 import DOMPurify from 'dompurify';
 import { getTranslation } from "./lib/i18n";
 import ICAL from 'ical.js';
+import { RuleConditionType, RuleMatcher, RuleActionType, CustomRuleCondition, CustomRuleAction, CustomRule, EMAIL_TAGS } from "./constants";
 
 // Use translation dictionary directly
 const t = getTranslation;
-
-export type RuleConditionType = 'subject' | 'from' | 'to' | 'body' | 'header' | 'size' | 'spam_score';
-export type RuleMatcher = 'contains' | 'is' | 'regex' | 'starts_with' | 'ends_with' | 'gt' | 'lt';
-export type RuleActionType = 'move' | 'forward' | 'reject' | 'mark_read' | 'mark_spam' | 'add_flag';
-
-export interface CustomRuleCondition {
-  type: RuleConditionType;
-  matcher: RuleMatcher;
-  headerName?: string;
-  value: string;
-}
-
-export interface CustomRuleAction {
-  type: RuleActionType;
-  value: string;
-}
-
-export interface CustomRule {
-  id: string;
-  name: string;
-  active: boolean;
-  condition: CustomRuleCondition;
-  action: CustomRuleAction;
-}
 
 const iconMap: Record<string, React.ElementType> = {
   Inbox, Send, File, AlertCircle, Trash2, Folder, FileEdit, Archive, ShieldAlert, Tag, Users, Bell, LayoutTemplate, Mail, BarChart3
@@ -602,16 +579,6 @@ function getMailboxDisplayName(mb: any, language: string) {
   }
   return mb.name;
 }
-
-export const EMAIL_TAGS = [
-  { keyword: '$label:red', name: '', color: 'bg-red-500' },
-  { keyword: '$label:orange', name: '', color: 'bg-orange-500' },
-  { keyword: '$label:yellow', name: '', color: 'bg-yellow-500' },
-  { keyword: '$label:green', name: '', color: 'bg-green-500' },
-  { keyword: '$label:blue', name: '', color: 'bg-blue-500' },
-  { keyword: '$label:purple', name: '', color: 'bg-purple-500' },
-  { keyword: '$label:pink', name: '', color: 'bg-pink-500' },
-];
 
 export default function App() {
   // 1. Synchronous Routing State (Prevents the Login Flash)
@@ -2578,13 +2545,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       };
 
       if (composeUndoSend === 0) {
-        setIsComposeOpen(false);
         await executeSend(emailData);
-        setDraftAttachments([]);
-        setToAddresses([]);
-        setToInput('');
-        setSubject('');
-        setEmailBody('');
         return;
       }
       
@@ -2764,6 +2725,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       toast.success("Email sent successfully!");
       
       // Reset compose state
+      setIsComposeOpen(false);
       setDraftAttachments([]);
       setToAddresses([]);
       setToInput('');
@@ -9024,6 +8986,28 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             </button>
                          );
                        }
+                       
+                        if (pendingSend) {
+                          return (
+                            <div className="flex items-center bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-[1.25rem] overflow-hidden group shadow-lg">
+                              <div className="px-5 py-2.5 font-bold flex items-center gap-2 text-[13px] tracking-wide relative overflow-hidden">
+                                <div 
+                                 className="absolute bottom-0 left-0 h-1 bg-indigo-500 transition-all duration-1000 ease-linear"
+                                 style={{ width: `${(countdown / composeUndoSend) * 100}%` }}
+                                />
+                                <Loader2 className="w-4 h-4 animate-spin relative z-10" />
+                                <span className="relative z-10">{t(language, 'Wait...')} ({countdown}s)</span>
+                              </div>
+                              <button 
+                                onClick={handleUndoSend}
+                                className="px-4 py-2.5 bg-white/10 dark:bg-black/10 hover:bg-white/20 dark:hover:bg-black/20 text-indigo-400 dark:text-indigo-600 font-bold text-[13px] tracking-wider transition-colors relative z-10 uppercase"
+                              >
+                                Undo
+                              </button>
+                            </div>
+                          );
+                        }
+
                        return (
                          <button 
                            onClick={() => handleSendEmail(false)}
