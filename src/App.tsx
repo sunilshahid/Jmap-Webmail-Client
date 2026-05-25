@@ -2576,10 +2576,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           expiration
         } : null
       };
+
+      if (composeUndoSend === 0) {
+        setIsComposeOpen(false);
+        await executeSend(emailData);
+        setDraftAttachments([]);
+        setToAddresses([]);
+        setToInput('');
+        setSubject('');
+        setEmailBody('');
+        return;
+      }
       
       setPendingSend(emailData);
       setShowUndoPill(true);
-      setCountdown(5);
+      setCountdown(composeUndoSend);
       setIsComposeOpen(false); // Close compose modal immediately
       
       const timer = setInterval(() => {
@@ -2597,7 +2608,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         await executeSend(emailData);
         setPendingSend(null);
         setShowUndoPill(false);
-      }, 5000);
+      }, composeUndoSend * 1000);
 
       setSendTimer(timeout);
       return;
@@ -9176,15 +9187,19 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       {/* Undo Pill */}
       {showUndoPill && (
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-bottom-4 duration-300">
-          <div className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 border border-white/10 dark:border-slate-200">
-            <div className="flex items-center gap-2">
+          <div className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 border border-white/10 dark:border-slate-200 relative overflow-hidden">
+            <div 
+              className="absolute bottom-0 left-0 h-1 bg-indigo-500 transition-all duration-1000 ease-linear"
+              style={{ width: `${(countdown / composeUndoSend) * 100}%` }}
+            />
+            <div className="flex items-center gap-2 relative z-10">
               <div className="w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
-                   <span className="text-sm font-medium">{t(language, 'loading')}</span>
+              <span className="text-sm font-medium">{t(language, 'Sending...')} ({countdown}s)</span>
             </div>
-            <div className="w-px h-4 bg-white/20 dark:bg-slate-200" />
+            <div className="w-px h-4 bg-white/20 dark:bg-slate-200 relative z-10" />
             <button 
               onClick={handleUndoSend}
-              className="text-sm font-bold text-indigo-400 dark:text-indigo-600 hover:text-indigo-300 dark:hover:text-indigo-500 transition-colors uppercase tracking-wider"
+              className="text-sm font-bold text-indigo-400 dark:text-indigo-600 hover:text-indigo-300 dark:hover:text-indigo-500 transition-colors uppercase tracking-wider relative z-10"
             >
               Undo
             </button>
