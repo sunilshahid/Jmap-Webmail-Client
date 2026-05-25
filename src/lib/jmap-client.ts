@@ -71,7 +71,7 @@ export class JmapClient {
         })
       });
     } catch (e: any) {
-      console.error("JMAP Network Error:", e);
+      console.warn("JMAP Network Error:", e);
       throw new Error(`Network failure: ${e.message}. Please check your internet connection or server availability.`);
     }
 
@@ -292,7 +292,7 @@ export class JmapClient {
                return;
             }
             if (payload.type === 'error') {
-               console.error("Backend WebSocket error:", payload.message);
+               console.warn("Backend WebSocket error:", payload.message);
                return;
             }
             if (payload.type === 'pong') {
@@ -916,7 +916,7 @@ export class JmapClient {
         ], caps);
         return data?.methodResponses?.[0]?.[1]?.list || [];
       } catch (e) {
-        console.error("Fallback fetch also failed", e);
+        console.warn("Fallback fetch also failed", e);
         return [];
       }
     }

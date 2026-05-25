@@ -2806,13 +2806,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           }
         }
       } catch (e) {
-        console.error("Failed to load vacation state", e);
+        console.warn("Failed to load vacation state", e);
       }
     };
     loadVacation();
   }, [credentials]);
 
-  const fetchMailboxes = useCallback(async () => {
+  const fetchMailboxes = useCallback(async (silent = false) => {
     if (!credentials) return;
     const callerUsername = credentials.username;
     try {
@@ -2825,7 +2825,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
            setIsLoading(true);
            await client.provisionDefaultMailboxes();
            mapped = await client.getMailboxes(); // Fetch again after provisioning
-           toast.success("Provisioned default mailboxes for new account.");
+           if (!silent) toast.success("Provisioned default mailboxes for new account.");
          } catch (e: any) {
            console.error("Failed to provision mailboxes", e);
          } finally {
@@ -2865,14 +2865,14 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       }
       return mapped;
     } catch (err) {
-      console.error("Failed to fetch mailboxes", err);
-      toast.error(err instanceof Error ? err.message : String(err));
+      console.warn("Failed to fetch mailboxes", err);
+      if (!silent) toast.error(err instanceof Error ? err.message : String(err));
       throw err;
     }
   }, [credentials, triggerNewEmailNotification]);
 
   useEffect(() => {
-    fetchMailboxes();
+    fetchMailboxes(true);
   }, [fetchMailboxes]);
 
   // Fetch Identities
@@ -2887,7 +2887,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       } else if (list.length > 0 && !selectedIdentityId) {
         setSelectedIdentityId(list[0].id);
       }
-    }).catch(err => console.error("Failed to fetch identities", err));
+    }).catch(err => console.warn("Failed to fetch identities", err));
   }, [credentials]);
 
   const handleCreateIdentity = async () => {
@@ -2939,7 +2939,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       const client = new JmapClient(credentials);
       client.getContacts()
         .then(list => setContacts(list))
-        .catch(err => console.error("Contact retrieval failed completely", err));
+        .catch(err => console.warn("Contact retrieval failed completely", err));
     }
   }, [credentials]);
 
@@ -2967,11 +2967,11 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       // FIXED: Actually fetch the calendars to populate the sidebar/modals
       client.getCalendars()
         .then(list => setCalendars(list))
-        .catch(err => console.error("Calendar retrieval failed", err));
+        .catch(err => console.warn("Calendar retrieval failed", err));
 
       client.getEvents(startOfMonth, endOfMonth)
         .then(list => setEvents(list))
-        .catch(err => console.error("Event retrieval failed completely", err));
+        .catch(err => console.warn("Event retrieval failed completely", err));
     }
   }, [credentials, currentCalendarDate]);
 

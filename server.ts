@@ -376,7 +376,11 @@ async function startServer() {
         if (response.status === 401 || response.status === 403) {
           throw new Error("Authentication failed. Please check your username and password.");
         }
-        throw new Error(`Server returned status ${response.status}`);
+        let errText = await response.text();
+        if (errText.includes('<html') || errText.length > 200) {
+           throw new Error(`Server returned status ${response.status} ${response.statusText} (Is the JMAP server online?)`);
+        }
+        throw new Error(`Server returned status ${response.status}: ${errText}`);
       }
       
       const data = await response.json();
@@ -461,8 +465,12 @@ async function startServer() {
       
       if (!response.ok) {
         const text = await response.text();
-        logDev(`JMAP API request failed - URL: ${targetUrl}, Status: ${response.status}, Error: ${text}`);
-        throw new Error(`API request failed with status ${response.status}: ${text}`);
+        let cleanedText = text;
+        if (cleanedText.includes('<html') || cleanedText.length > 200) {
+           cleanedText = "Server returned " + response.status + " " + response.statusText + " (Is the JMAP server online?)";
+        }
+        logDev(`JMAP API request failed - URL: ${targetUrl}, Status: ${response.status}`);
+        throw new Error(`API request failed with status ${response.status}: ${cleanedText}`);
       }
       
       const data = await response.json();
@@ -526,9 +534,12 @@ async function startServer() {
       });
 
       if (!response.ok) {
-        const text = await response.text();
-        logDev(`JMAP Upload failed - URL: ${finalUploadUrl}, Status: ${response.status}, Error: ${text}`);
-        throw new Error(`Upload failed with status ${response.status}: ${text}`);
+        let errText = await response.text();
+        if (errText.includes('<html') || errText.length > 200) {
+           errText = `Server returned ${response.status} ${response.statusText} (Is the JMAP server online?)`;
+        }
+        logDev(`JMAP Upload failed - URL: ${finalUploadUrl}, Status: ${response.status}, Error: ${errText}`);
+        throw new Error(`Upload failed with status ${response.status}: ${errText}`);
       }
 
       const data = await response.json();
