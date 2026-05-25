@@ -3,6 +3,7 @@ import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import crypto from "crypto";
+import { spawn } from "child_process";
 import { WebSocketServer, WebSocket as NodeWebSocket } from "ws";
 import { setGlobalDispatcher, Agent } from "undici";
 
@@ -15,6 +16,13 @@ setGlobalDispatcher(new Agent({
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 async function startServer() {
+  let isDeveloperMode = false;
+  function logDev(...args: any[]) {
+    if (isDeveloperMode) {
+      console.log('[DevMode]', ...args);
+    }
+  }
+
   const app = express();
   const PORT = 3000;
 
@@ -112,9 +120,9 @@ async function startServer() {
           });
           
           if (!response.ok) throw new Error(`Status ${response.status}`);
-          console.log(`Successfully dispatched scheduled draft: ${job.draftId}`);
+          logDev(`Successfully dispatched scheduled draft: ${job.draftId}`);
         } catch (e) {
-          console.error(`Failed to dispatch scheduled email: ${e}`);
+          logDev(`Failed to dispatch scheduled email: ${e}`);
         }
       }
     }
@@ -197,6 +205,13 @@ async function startServer() {
     else if (expiration === '1hour') ttl = 60 * 60 * 1000;
     else if (expiration === '1week') ttl = 7 * 24 * 60 * 60 * 1000;
     else if (expiration === 'burn') ttl = 30 * 24 * 60 * 60 * 1000;
+    else if (expiration && !isNaN(new Date(expiration).getTime())) {
+      const expDate = new Date(expiration).getTime();
+      const diff = expDate - Date.now();
+      if (diff > 0) ttl = diff;
+    }
+
+    logDev(`[Secure Message API] Generated message ID=${id}, ttl=${ttl}ms`);
 
     secureStore.set(id, {
       encryptedPayload,
@@ -222,6 +237,13 @@ async function startServer() {
     else if (expiration === '1hour') ttl = 60 * 60 * 1000;
     else if (expiration === '1week') ttl = 7 * 24 * 60 * 60 * 1000;
     else if (expiration === 'burn') ttl = 30 * 24 * 60 * 60 * 1000; // 30 days max for burn
+    else if (expiration && !isNaN(new Date(expiration).getTime())) {
+      const expDate = new Date(expiration).getTime();
+      const diff = expDate - Date.now();
+      if (diff > 0) ttl = diff;
+    }
+
+    logDev(`[Secure Message UI] Generated message ID=${id}, ttl=${ttl}ms`);
 
     secureStore.set(id, {
       encryptedPayload,
@@ -239,11 +261,15 @@ async function startServer() {
     const msg = secureStore.get(id);
 
     if (!msg) {
+      logDev(`[Secure Retrieve] Failed lookup or expired message ID=${id}`);
       return res.status(404).json({ error: "Message not found or expired" });
     }
 
     if (msg.viewOnce) {
+      logDev(`[Secure Retrieve] Message ID=${id} marked viewOnce. Shredding payload immediately.`);
       secureStore.delete(id);
+    } else {
+      logDev(`[Secure Retrieve] Message ID=${id} fetched successfully.`);
     }
 
     res.json({
@@ -251,6 +277,77 @@ async function startServer() {
       iv: msg.iv,
       salt: msg.salt
     });
+  });
+
+  // Admin APIs
+  app.get("/api/admin/developer-mode", (req, res) => {
+    res.json({ isDeveloperMode });
+  });
+
+  app.post("/api/admin/developer-mode", (req, res) => {
+    isDeveloperMode = req.body.isDeveloperMode === true;
+    res.json({ isDeveloperMode });
+  });
+
+  app.get("/api/admin/update", (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    });
+
+    const sendEvent = (msg: string) => res.write(`data: ${JSON.stringify({ message: msg })}\n\n`);
+    
+    sendEvent("Starting Smart Update...");
+
+    const runCommand = (cmd: string, args: string[]) => {
+      return new Promise<{stdout: string, stderr: string, code: number | null}>((resolve) => {
+        const child = spawn(cmd, args);
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (data) => stdout += data.toString());
+        child.stderr.on('data', (data) => stderr += data.toString());
+        child.on('close', (code) => resolve({ stdout, stderr, code }));
+      });
+    };
+
+    (async () => {
+      try {
+        sendEvent("Running git pull origin main...");
+        let resGit = await runCommand("git", ["pull", "origin", "main"]);
+        
+        if (resGit.code !== 0) {
+           sendEvent(`Git pull non-zero exit: ${resGit.stderr.substring(0, 100)}... Skipping smart check.`);
+        } else {
+           sendEvent("Git pull successful.");
+           let diff = await runCommand("git", ["diff", "HEAD@{1}", "HEAD", "--name-only"]);
+           
+           if (diff.stdout.includes("package.json")) {
+              sendEvent("Updating dependencies...");
+              await runCommand("npm", ["install"]);
+           }
+           
+           if (diff.stdout.includes("src/")) {
+              sendEvent("Rebuilding frontend...");
+              await runCommand("npm", ["run", "build"]);
+           }
+           
+           if (!diff.stdout.includes("package.json") && !diff.stdout.includes("src/")) {
+              sendEvent("No major structural changes detected. Moving to restart.");
+           }
+        }
+        
+        sendEvent("Restarting server...");
+        // Gracefully kill process, rely on container/PM2 to reboot it
+        setTimeout(() => {
+          process.exit(0);
+        }, 1000);
+      } catch (err: any) {
+        sendEvent(`Error during update: ${err.message}`);
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        res.end();
+      }
+    })();
   });
 
   // JMAP Authentication / Session Discovery
@@ -265,7 +362,7 @@ async function startServer() {
       }
       
       const sessionUrl = `${cleanUrl}/.well-known/jmap`;
-      console.log(`JMAP Session Discovery: ${sessionUrl}`);
+      logDev(`JMAP Session Discovery: ${sessionUrl}`);
       
       const response = await fetch(sessionUrl, {
         method: 'GET',
@@ -349,9 +446,8 @@ async function startServer() {
         }
       }
 
-      console.log(`JMAP API Proxy: POST ${targetUrl}`);
-      // Add server-side logging for the payload (developer mode equivalent)
-      console.log(`[Server-Side Log] JMAP REQUEST Payload:`, JSON.stringify(payload, null, 2));
+      logDev(`JMAP API Proxy: POST ${targetUrl}`);
+      logDev(`[Server-Side Log] JMAP REQUEST Payload:`, JSON.stringify(payload, null, 2));
 
       const response = await fetch(targetUrl, {
         method: 'POST',
@@ -365,15 +461,15 @@ async function startServer() {
       
       if (!response.ok) {
         const text = await response.text();
-        console.error(`JMAP API request failed - URL: ${targetUrl}, Status: ${response.status}, Error: ${text}`);
+        logDev(`JMAP API request failed - URL: ${targetUrl}, Status: ${response.status}, Error: ${text}`);
         throw new Error(`API request failed with status ${response.status}: ${text}`);
       }
       
       const data = await response.json();
-      console.log(`[Server-Side Log] JMAP RESPONSE:`, JSON.stringify(data).substring(0, 500) + '... (truncated)');
+      logDev(`[Server-Side Log] JMAP RESPONSE:`, JSON.stringify(data).substring(0, 500) + '... (truncated)');
       res.json(data);
     } catch (e: any) {
-      console.error("JMAP API Error:", e.message);
+      logDev("JMAP API Error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -418,7 +514,7 @@ async function startServer() {
         finalUploadUrl = finalUploadUrl.replace(/^http:\/\//i, 'https://');
       }
 
-      console.log(`JMAP Upload Proxy: ${finalUploadUrl}`);
+      logDev(`JMAP Upload Proxy: ${finalUploadUrl}`);
 
       const response = await fetch(finalUploadUrl, {
         method: 'POST',
@@ -431,14 +527,14 @@ async function startServer() {
 
       if (!response.ok) {
         const text = await response.text();
-        console.error(`JMAP Upload failed - URL: ${finalUploadUrl}, Status: ${response.status}, Error: ${text}`);
+        logDev(`JMAP Upload failed - URL: ${finalUploadUrl}, Status: ${response.status}, Error: ${text}`);
         throw new Error(`Upload failed with status ${response.status}: ${text}`);
       }
 
       const data = await response.json();
       res.json(data);
     } catch (e: any) {
-      console.error("JMAP Upload Error:", e.message);
+      logDev("JMAP Upload Error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -492,7 +588,7 @@ async function startServer() {
       });
 
       if (!response.ok) {
-        console.error(`JMAP Download failed - URL: ${finalDownloadUrl}, Status: ${response.status}`);
+        logDev(`JMAP Download failed - URL: ${finalDownloadUrl}, Status: ${response.status}`);
         const text = await response.text();
         return res.status(response.status).send(text);
       }
@@ -503,7 +599,7 @@ async function startServer() {
       const buffer = await response.arrayBuffer();
       res.send(Buffer.from(buffer));
     } catch (e: any) {
-      console.error("JMAP Download Error:", e.message);
+      logDev("JMAP Download Error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -580,7 +676,7 @@ async function startServer() {
           });
 
           upstreamWs.on('open', () => {
-             console.log(`Upstream WebSocket connected to ${websocketUrl}`);
+             logDev(`Upstream WebSocket connected to ${websocketUrl}`);
              ws.send(JSON.stringify({ type: 'init_success' }));
           });
 
@@ -597,7 +693,7 @@ async function startServer() {
           });
 
           upstreamWs.on('error', (err) => {
-             console.error('Upstream WS Error:', err);
+             logDev('Upstream WS Error:', err);
              if (ws.readyState === ws.OPEN) {
                 ws.send(JSON.stringify({ type: 'error', message: err.message }));
              }
@@ -609,7 +705,7 @@ async function startServer() {
           }
         }
       } catch (e) {
-        console.error("WS message error", e);
+        logDev("WS message error", e);
       }
     });
 

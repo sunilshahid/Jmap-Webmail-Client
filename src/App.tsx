@@ -5,7 +5,7 @@ import {
   Reply, Forward, X, Edit3, Mail, LogOut, Loader2, Server,
   Calendar, Users, RefreshCw, Lock, Clock, Key, Shield, Plus, ExternalLink, Eye, EyeOff,
   Sparkles, Download, Upload, Bell, Check, MailCheck, Sun, Filter, ArrowLeft, Paperclip,
-  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile, Camera, Globe, Video, MapPin, Link, Copy, BookOpen, Webhook, Terminal
+  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile, Camera, Globe, Video, MapPin, Link, Copy, BookOpen, Webhook, Terminal, DownloadCloud
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "./lib/utils";
@@ -87,6 +87,26 @@ async function deriveKey(password: string, salt: Uint8Array) {
   );
 }
 
+function bufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...Array.from(bytes.subarray(i, i + chunkSize)));
+  }
+  return window.btoa(binary);
+}
+
+function base64ToBuffer(base64: string): Uint8Array {
+  const binary_string = window.atob(base64);
+  const len = binary_string.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary_string.charCodeAt(i);
+  }
+  return bytes;
+}
+
 async function encryptData(data: string, password: string) {
   const encoder = new TextEncoder();
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -98,17 +118,17 @@ async function encryptData(data: string, password: string) {
     encoder.encode(data)
   );
   return {
-    encryptedPayload: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
-    iv: btoa(String.fromCharCode(...iv)),
-    salt: btoa(String.fromCharCode(...salt)),
+    encryptedPayload: bufferToBase64(encrypted),
+    iv: bufferToBase64(iv),
+    salt: bufferToBase64(salt),
   };
 }
 
 async function decryptData(encryptedPayload: string, iv: string, salt: string, password: string) {
   const decoder = new TextDecoder();
-  const saltArr = new Uint8Array(atob(salt).split("").map(c => c.charCodeAt(0)));
-  const ivArr = new Uint8Array(atob(iv).split("").map(c => c.charCodeAt(0)));
-  const encryptedArr = new Uint8Array(atob(encryptedPayload).split("").map(c => c.charCodeAt(0)));
+  const saltArr = base64ToBuffer(salt);
+  const ivArr = base64ToBuffer(iv);
+  const encryptedArr = base64ToBuffer(encryptedPayload);
   const key = await deriveKey(password, saltArr);
   const decrypted = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: ivArr },
@@ -120,9 +140,11 @@ async function decryptData(encryptedPayload: string, iv: string, salt: string, p
 
 function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: string | null, onBack: () => void }) {
   const [password, setPassword] = useState(initialKey || "");
+  const [showPassword, setShowPassword] = useState(false);
   const [decryptedData, setDecryptedData] = useState<{ subject: string, body: string, attachments?: any[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDecrypting, setIsDecrypting] = useState(false);
+  const [encryptedCache, setEncryptedCache] = useState<{ encryptedPayload: string, iv: string, salt: string } | null>(null);
   
   // THE FIX: Create a mutable lock that survives re-renders
   const autoDecryptAttempted = useRef(false);
@@ -132,21 +154,38 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
     setIsDecrypting(true);
     setError(null);
     try {
-      const response = await fetch(`/api/secure-retrieve/${id}`);
-      if (!response.ok) {
-        if (response.status === 404) throw new Error("Message not found or already burned.");
-        throw new Error("Failed to retrieve message.");
+      let payload = encryptedCache;
+      if (!payload) {
+        const response = await fetch(`/api/secure-retrieve/${id}`);
+        if (!response.ok) {
+          if (response.status === 404) throw new Error("Message not found or already burned.");
+          throw new Error("Failed to retrieve message.");
+        }
+        payload = await response.json();
+        setEncryptedCache(payload);
       }
-      const { encryptedPayload, iv, salt } = await response.json();
+      const { encryptedPayload, iv, salt } = payload!;
       const decryptedText = await decryptData(encryptedPayload, iv, salt, password);
       const data = JSON.parse(decryptedText);
       setDecryptedData(data);
     } catch (e: any) {
-      setError(e.message);
+      console.error("Decryption error:", e);
+      if (
+        e.name === 'OperationError' || 
+        e.name === 'SyntaxError' || 
+        e.name === 'InvalidCharacterError' ||
+        String(e).includes('OperationError') || 
+        String(e).includes('incorrect') || 
+        String(e).includes('corrupt')
+      ) {
+        setError("Incorrect password or corrupted message data. Please try again.");
+      } else {
+        setError(e?.message || String(e) || "Failed to decrypt message.");
+      }
     } finally {
       setIsDecrypting(false);
     }
-  }, [id, password]);
+  }, [id, password, encryptedCache]);
 
   const downloadAttachment = (att: any) => {
     try {
@@ -229,12 +268,18 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
                 <div className="relative">
                   <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                   <input 
-                    type="password" 
+                    type={showPassword ? "text" : "password"} 
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Enter the decryption key..."
-                    className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all dark:text-white"
+                    className="w-full pl-12 pr-12 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all dark:text-white"
                   />
+                  <div 
+                    className="absolute inset-y-0 right-4 flex items-center cursor-pointer text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </div>
                 </div>
               </div>
 
@@ -871,9 +916,6 @@ export default function App() {
 }
 
 function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitchAccount, onAddAccount, isDarkMode, setIsDarkMode }: any) {
-  const [isDeveloperMode, setIsDeveloperMode] = useState(() => {
-    return localStorage.getItem("webmail_developer_mode") === "true";
-  });
   const [isBetaFeaturesEnabled, setIsBetaFeaturesEnabled] = useState(() => {
     return localStorage.getItem("webmail_beta_features") === "true";
   });
@@ -921,13 +963,23 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [eventErrors, setEventErrors] = useState<Record<string, string>>({});
   const [contactSearchQuery, setContactSearchQuery] = useState("");
   const [eventSearchQuery, setEventSearchQuery] = useState("");
-  const [isSettingsSection, setIsSettingsSection] = useState<'general' | 'account' | 'security' | 'advanced' | 'notifications' | 'vacation' | 'templates' | 'filters' | 'contacts' | 'tags' | 'calendar' | 'folders' | 'identities' | 'read' | 'compose' | 'api'>(() => {
+  const [isSettingsSection, setIsSettingsSection] = useState<'general' | 'account' | 'security' | 'advanced' | 'notifications' | 'vacation' | 'templates' | 'filters' | 'contacts' | 'tags' | 'calendar' | 'folders' | 'identities' | 'read' | 'compose' | 'api' | 'update'>(() => {
     return (localStorage.getItem('webmail_settings_section') as any) || 'account';
   });
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [apiKeys, setApiKeys] = useState<{id: string, key?: string, name: string, createdAt: number}[]>([]);
   const [newKeyName, setNewKeyName] = useState("");
   const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+  const [isDeveloperMode, setIsDeveloperMode] = useState(false);
+  const [updateTerminal, setUpdateTerminal] = useState<string[]>([]);
+  const [isUpdating, setIsUpdating] = useState(false);
+  
+  useEffect(() => {
+    fetch('/api/admin/developer-mode')
+      .then(res => res.json())
+      .then(data => setIsDeveloperMode(data.isDeveloperMode))
+      .catch(console.error);
+  }, []);
 
   useEffect(() => {
     if (activeApp === 'settings' && isSettingsSection === 'api') {
@@ -1463,6 +1515,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [isIdentityDropdownOpen, setIsIdentityDropdownOpen] = useState(false);
   const [isSubAddressModalOpen, setIsSubAddressModalOpen] = useState(false);
   const [isSecureMessage, setIsSecureMessage] = useState(false);
+  const [showSecurePasswordCompose, setShowSecurePasswordCompose] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
   const [scheduleTime, setScheduleTime] = useState("");
   const [scheduledJobs, setScheduledJobs] = useState<Record<string, number>>({});
@@ -1475,7 +1528,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     { label: "1 Hour", value: "1hour" },
     { label: "1 Day", value: "1day" },
     { label: "1 Week", value: "1week" },
-    { label: "Burn after reading", value: "burn" }
+    { label: "Burn after reading", value: "burn" },
+    { label: "Custom Date/Time", value: "custom" }
   ];
   const [searchQuery, setSearchQuery] = useState("");
   const [isAdvancedSearchOpen, setIsAdvancedSearchOpen] = useState(false);
@@ -6204,6 +6258,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                     { id: 'security', icon: Shield },
                     { id: 'advanced', icon: Key },
                     { id: 'api', icon: Webhook },
+                    { id: 'update', icon: RefreshCw },
                   ].map((item) => (
                     <button 
                       key={item.id}
@@ -6247,7 +6302,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                      isSettingsSection === 'calendar' ? 'Calendar' :
                      isSettingsSection === 'folders' ? t(language, 'folders') : 
                      isSettingsSection === 'filters' ? t(language, 'filters') : 
-                     isSettingsSection === 'api' ? 'API' : t(language, 'advanced')}
+                     isSettingsSection === 'api' ? 'API' : 
+                     isSettingsSection === 'update' ? 'Update' : t(language, 'advanced')}
                   </h1>
                   <button 
                     onClick={() => setIsSettingsMenuOpen(true)}
@@ -6267,7 +6323,8 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                      isSettingsSection === 'calendar' ? 'Calendar' :
                      isSettingsSection === 'folders' ? t(language, 'folders') : 
                      isSettingsSection === 'filters' ? t(language, 'filters') : 
-                     isSettingsSection === 'api' ? 'API' : t(language, 'advanced')}
+                     isSettingsSection === 'api' ? 'API' : 
+                     isSettingsSection === 'update' ? 'Update' : t(language, 'advanced')}
                     <ChevronDown className="w-4 h-4" />
                   </button>
                 </div>
@@ -6301,6 +6358,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           { id: 'security', icon: Shield },
                           { id: 'advanced', icon: Key },
                           { id: 'api', icon: Webhook },
+                          { id: 'update', icon: RefreshCw },
                         ].map((item) => (
                           <button 
                             key={item.id}
@@ -6313,7 +6371,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             <div className="flex items-center gap-4">
                               <item.icon className={cn("w-5 h-5", isSettingsSection === item.id ? "text-indigo-600 dark:text-indigo-400" : "text-slate-500")} />
                               <span className={cn("text-lg", isSettingsSection === item.id ? "font-bold text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400")}>
-                                {item.id === 'api' ? 'API' : t(language, item.id)}
+                                {item.id === 'api' ? 'API' : item.id === 'update' ? 'Update' : t(language, item.id)}
                               </span>
                             </div>
                             {isSettingsSection === item.id && (
@@ -8110,13 +8168,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           <div className="flex items-center justify-between gap-4">
                             <div className="flex-1 min-w-0">
                               <div className="font-bold text-slate-900 dark:text-white">Developer Mode</div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400">Enable advanced API debugging logs</div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400">Enable advanced API debugging logs on the backend</div>
                             </div>
                             <button 
-                              onClick={() => {
+                              onClick={async () => {
                                 const newMode = !isDeveloperMode;
                                 setIsDeveloperMode(newMode);
-                                localStorage.setItem("webmail_developer_mode", String(newMode));
+                                try {
+                                  await fetch('/api/admin/developer-mode', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ isDeveloperMode: newMode })
+                                  });
+                                } catch (err) {
+                                  console.error("Failed to set dev mode:", err);
+                                }
                               }}
                               className={cn("relative inline-flex h-8 w-14 items-center rounded-full transition-colors shrink-0 outline-none", isDeveloperMode ? 'bg-indigo-600' : 'bg-slate-200 dark:bg-slate-700')}
                             >
@@ -8148,6 +8214,75 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                       >
                         <LogOut className="w-5 h-5" /> Sign Out
                       </button>
+                    </div>
+                  )}
+
+                  {isSettingsSection === 'update' && (
+                    <div className="grid gap-6">
+                      <div className="bg-white dark:bg-[#050505] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
+                            <RefreshCw className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                          </div>
+                          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Update</h2>
+                        </div>
+                        
+                        <div className="space-y-6 flex flex-col">
+                          <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden self-stretch flex flex-col bg-slate-900 shadow-inner min-h-[300px]">
+                            <div className="bg-slate-800/80 px-4 py-2 border-b border-slate-700 flex items-center justify-between">
+                              <div className="flex items-center gap-2 text-slate-300 font-mono text-xs">
+                                <Terminal className="w-4 h-4" /> root@worker:~
+                              </div>
+                              {isUpdating && <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                            </div>
+                            <div className="p-4 font-mono text-xs text-slate-300 overflow-y-auto space-y-1 bg-black flex-1 max-h-[350px]">
+                              {updateTerminal.map((line, i) => (
+                                <div key={i} className="opacity-90">{line}</div>
+                              ))}
+                              {!isUpdating && updateTerminal.length === 0 && (
+                                <div className="text-slate-500 italic">Ready. Click 'Start Update' to begin.</div>
+                              )}
+                              {isUpdating && (
+                                <div className="animate-pulse">_</div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end">
+                            <button
+                              disabled={isUpdating}
+                              onClick={() => {
+                                setIsUpdating(true);
+                                setUpdateTerminal(["Initializing Smart Update stream..."]);
+                                const es = new EventSource('/api/admin/update');
+                                es.onmessage = (event) => {
+                                  try {
+                                    const data = JSON.parse(event.data);
+                                    if (data.message) {
+                                      setUpdateTerminal(prev => [...prev, data.message]);
+                                    }
+                                    if (data.done || data.message?.includes('Restarting')) {
+                                      es.close();
+                                      setIsUpdating(false);
+                                      if (data.message?.includes('Restarting')) {
+                                        setTimeout(() => window.location.reload(), 4000);
+                                      }
+                                    }
+                                  } catch (err) {}
+                                };
+                                es.onerror = (e) => {
+                                  es.close();
+                                  setIsUpdating(false);
+                                  setUpdateTerminal(prev => [...prev, "Connection closed."]);
+                                };
+                              }}
+                              className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl font-bold flex items-center gap-2 shadow-lg hover:shadow-indigo-500/25 transition-all"
+                            >
+                              {isUpdating ? <><Loader2 className="w-5 h-5 animate-spin" /> Updating</> : <><DownloadCloud className="w-5 h-5" /> Start Update</>}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -8233,16 +8368,35 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                             {window.location.origin}
                           </div>
                         </div>
-                        <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl font-mono text-[13px] text-slate-800 dark:text-slate-300 whitespace-pre-wrap break-all">
-                          <span className="text-indigo-600 dark:text-indigo-400">POST</span> {window.location.origin}/api/v1/secure-message{'\n'}
+                        <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl font-mono text-[13px] text-slate-800 dark:text-slate-300 whitespace-pre-wrap break-all border border-slate-200 dark:border-slate-800">
+                          <span className="text-indigo-600 dark:text-indigo-400 font-bold">POST</span> {window.location.origin}/api/v1/secure-message{'\n'}
                           <span className="text-blue-600 dark:text-blue-400">Authorization:</span> Bearer <span className="text-emerald-600 dark:text-emerald-400">{(apiKeys.length > 0 && apiKeys[0].key) ? apiKeys[0].key : 'sk_your_api_key'}</span>{'\n\n'}
+                          <span className="text-slate-500 font-bold">// The payload must be a JSON object like this:</span>{'\n'}
                           <span className="text-slate-500">{`{`}</span>{'\n'}
-                          {`  "encryptedPayload": "...", \n`}
-                          {`  "iv": "...", \n`}
-                          {`  "salt": "...", \n`}
+                          <span className="text-slate-500">  // 1. Data encrypted via AES-GCM (client-side)</span>{'\n'}
+                          <span className="text-slate-500">  // The decrypted plaintext MUST be JSON: {`{"subject": "...", "body": "..."}`}</span>{'\n'}
+                          {`  "encryptedPayload": "base64_string...", \n`}
+                          {`  "iv": "base64_string...", \n`}
+                          {`  "salt": "base64_string...", \n\n`}
+                          <span className="text-slate-500">  // 2. Metadata (Server-side controls)</span>{'\n'}
+                          <span className="text-slate-500">  // Valid expirations: "5min", "1hour", "1day", "1week", "burn", or ISO String / Unix Timestamp</span>{'\n'}
                           {`  "expiration": "1week", \n`}
+                          <span className="text-slate-500">  // If viewOnce is true, data is wiped instantly on first view</span>{'\n'}
                           {`  "viewOnce": false \n`}
                           <span className="text-slate-500">{`}`}</span>
+                        </div>
+                        
+                        <div className="mt-4 p-4 bg-amber-50/50 dark:bg-amber-500/10 border border-amber-100 dark:border-amber-500/20 rounded-xl space-y-2">
+                          <h3 className="text-sm font-bold text-amber-900 dark:text-amber-100">Zero-Knowledge "Passwordless" URLs</h3>
+                          <p className="text-xs text-amber-800 dark:text-amber-200">
+                            Because the backend has <strong>zero knowledge</strong> of your encryption password, the API will only ever return a standard URL (e.g., <code className="bg-amber-100 dark:bg-amber-900/50 px-1 rounded">/secure/1234-abcd</code>).
+                          </p>
+                          <p className="text-xs text-amber-800 dark:text-amber-200">
+                            To create an "auto-decrypting" passwordless URL to send to your recipients, your external client application must manually append the password as a URL hashtag fragment:
+                          </p>
+                          <div className="text-xs font-mono bg-white dark:bg-[#000] p-2 rounded-lg border border-amber-200 dark:border-amber-500/30 text-amber-900 dark:text-amber-300">
+                            {window.location.origin}/secure/1234-abcd<span className="font-bold text-emerald-600 dark:text-emerald-400">#your_secret_password</span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -8694,13 +8848,21 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           </div>
 
                           {!useAutomaticKey && (
-                            <input 
-                              type="password"
-                              value={securePassword}
-                              onChange={(e) => setSecurePassword(e.target.value)}
-                              placeholder="Set a custom decryption password..."
-                              className="w-full bg-white dark:bg-slate-900 border border-indigo-100 dark:border-indigo-500/30 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all text-slate-700 dark:text-slate-200"
-                            />
+                            <div className="relative">
+                              <input 
+                                type={showSecurePasswordCompose ? "text" : "password"}
+                                value={securePassword}
+                                onChange={(e) => setSecurePassword(e.target.value)}
+                                placeholder="Set a custom decryption password..."
+                                className="w-full bg-white dark:bg-slate-900 border border-indigo-100 dark:border-indigo-500/30 rounded-xl px-4 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all text-slate-700 dark:text-slate-200"
+                              />
+                              <div 
+                                className="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                                onClick={() => setShowSecurePasswordCompose(!showSecurePasswordCompose)}
+                              >
+                                {showSecurePasswordCompose ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </div>
+                            </div>
                           )}
 
                           <div className="flex items-center justify-between">
@@ -8712,7 +8874,7 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                               onClick={() => setIsExpirationModalOpen(true)}
                               className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:border-indigo-500/50 transition-all shadow-sm"
                             >
-                              {expirationOptions.find(o => o.value === expiration)?.label}
+                              {expirationOptions.find(o => o.value === expiration)?.label || (expiration !== 'custom' && expiration ? new Date(expiration).toLocaleString() : "Custom Date")}
                               <ChevronDown className="w-4 h-4 text-slate-400" />
                             </button>
                           </div>
@@ -9927,18 +10089,41 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 <button
                   key={option.value}
                   onClick={() => {
-                    setExpiration(option.value);
-                    setIsExpirationModalOpen(false);
+                    if (option.value === 'custom') {
+                      setExpiration('custom');
+                    } else {
+                      setExpiration(option.value);
+                      setIsExpirationModalOpen(false);
+                    }
                   }}
                   className={cn(
                     "w-full px-4 py-3 flex items-center justify-between rounded-xl transition-colors",
-                    expiration === option.value ? "bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" : "hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                    (expiration === option.value || (option.value === 'custom' && expiration !== 'custom' && !expirationOptions.find(o => o.value === expiration))) ? "bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" : "hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
                   )}
                 >
                   <span className="font-medium">{option.label}</span>
-                  {expiration === option.value && <div className="w-2 h-2 rounded-full bg-indigo-500" />}
+                  {(expiration === option.value || (option.value === 'custom' && expiration !== 'custom' && !expirationOptions.find(o => o.value === expiration))) && <div className="w-2 h-2 rounded-full bg-indigo-500" />}
                 </button>
               ))}
+              {(expiration === 'custom' || (!expirationOptions.find(o => o.value === expiration) && expiration !== 'custom')) && (
+                 <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-3 mt-2 animate-in slide-in-from-top-2">
+                   <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Select Expiration Date & Time</label>
+                   <input 
+                     type="datetime-local" 
+                     className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-900 dark:text-white outline-none focus:border-indigo-500"
+                     value={expiration !== 'custom' && expiration ? new Date(new Date(expiration).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0,16) : ""}
+                     onChange={(e) => {
+                       const d = new Date(e.target.value);
+                       if (!isNaN(d.getTime())) {
+                         setExpiration(d.toISOString());
+                       }
+                     }}
+                   />
+                   <div className="flex justify-end mt-2">
+                     <button onClick={() => setIsExpirationModalOpen(false)} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-md hover:bg-indigo-700 transition">Apply</button>
+                   </div>
+                 </div>
+              )}
             </div>
           </div>
         </div>

@@ -124,8 +124,19 @@ export class JmapClient {
     });
     
     if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.error || "Authentication failed. Check your credentials and server URL.");
+      const text = await res.text();
+      let msg = `Server returned status ${res.status}`;
+      try {
+        const errorData = JSON.parse(text);
+        if (errorData.error) msg = errorData.error;
+      } catch (e) {
+         if (res.status === 502 || res.status === 404 || res.status >= 500) {
+            msg = `Unable to contact the mail server at ${serverUrl}. Please check the Server URL.`;
+         } else if (res.status === 401 || res.status === 403) {
+            msg = "Authentication failed. Please check your credentials.";
+         }
+      }
+      throw new Error(msg);
     }
     
     const session = await res.json();
