@@ -155,7 +155,7 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
         String(e).includes('incorrect') || 
         String(e).includes('corrupt')
       ) {
-        setError("Incorrect password or corrupted message data. Please try again.");
+        setError("Invalid password or corrupted message data. Please try again.");
       } else {
         setError(e?.message || String(e) || "Failed to decrypt message.");
       }
@@ -189,15 +189,18 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
   };
 
   const isImage = (type: string | null | undefined) => type && typeof type === 'string' && type.startsWith('image/');
+  const isVideo = (type: string | null | undefined) => type && typeof type === 'string' && type.startsWith('video/');
+  const isAudio = (type: string | null | undefined) => type && typeof type === 'string' && type.startsWith('audio/');
   const [previews, setPreviews] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (decryptedData?.attachments) {
       const newPreviews: Record<string, string> = {};
       decryptedData.attachments.forEach((att, idx) => {
-        if (isImage(att.type)) {
+        if (isImage(att.type) || isVideo(att.type) || isAudio(att.type)) {
           try {
-            const byteCharacters = atob(att.data);
+            const dataBase64 = att.data.includes(',') ? att.data.split(',')[1] : att.data;
+            const byteCharacters = atob(dataBase64);
             const byteNumbers = new Array(byteCharacters.length);
             for (let i = 0; i < byteCharacters.length; i++) {
               byteNumbers[i] = byteCharacters.charCodeAt(i);
@@ -327,6 +330,26 @@ function SecurePortal({ id, initialKey, onBack }: { id: string, initialKey: stri
                                   View Full Size
                                 </button>
                               </div>
+                            </div>
+                          )}
+                          
+                          {att.type?.startsWith('video/') && previews[`att-${idx}`] && (
+                            <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black/5 dark:bg-white/5">
+                              <video 
+                                src={previews[`att-${idx}`]} 
+                                controls
+                                className="w-full max-h-[400px]"
+                              />
+                            </div>
+                          )}
+
+                          {att.type?.startsWith('audio/') && previews[`att-${idx}`] && (
+                            <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black/5 dark:bg-white/5 p-4">
+                              <audio 
+                                src={previews[`att-${idx}`]} 
+                                controls
+                                className="w-full"
+                              />
                             </div>
                           )}
                         </div>

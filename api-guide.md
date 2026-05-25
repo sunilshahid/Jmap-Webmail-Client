@@ -29,14 +29,29 @@ The request body must be a JSON object containing the encrypted payload and its 
 
 ### Encryption Requirements (Client-Side)
 Before sending the payload to the server, you must encrypt the data using **AES-GCM**.
-The plaintext data **MUST** be a valid JSON object containing at least a `subject` and `body`:
+The plaintext data **MUST** be a valid JSON object containing at least a `subject`, `body`, and optionally an `attachments` array:
 
 ```json
 {
   "subject": "Confidential Report",
-  "body": "This is the secure content of the message."
+  "body": "This is the secure content of the message.",
+  "attachments": [
+    {
+      "name": "diagram.png",
+      "type": "image/png",
+      "size": 1048576,
+      "data": "data:image/png;base64,iVBORw0KGgoAAAAN..."
+    },
+    {
+      "name": "video.mp4",
+      "type": "video/mp4",
+      "size": 2097152,
+      "data": "data:video/mp4;base64,AAAAIGZ0eXBpc29t..."
+    }
+  ]
 }
 ```
+*Note on attachments:* The Secure Message portal supports all file types (images, videos, PDFs, zip, etc.). They will be rendered if supported by the browser (such as images), or presented as secure downloads securely processed in-memory directly on the client. The `data` property can be raw Base64 or a full Base64 Data URI.
 
 ### Expiration Time (`expiration`)
 The expiration field controls how long the server retains the encrypted payload before forcefully purging it from memory. You can use predefined shortcuts or custom timestamps.

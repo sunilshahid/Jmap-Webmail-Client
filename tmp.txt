@@ -1,2 +1,0 @@
-2308:  const handleSendEmail = async (isScheduled = false) => {
-8223:                           onClick={() => handleSendEmail(false)}
