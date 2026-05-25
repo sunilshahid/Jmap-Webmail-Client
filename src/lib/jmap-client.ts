@@ -124,7 +124,8 @@ export class JmapClient {
     });
     
     if (!res.ok) {
-      throw new Error("Authentication failed. Check your credentials and server URL.");
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.error || "Authentication failed. Check your credentials and server URL.");
     }
     
     const session = await res.json();

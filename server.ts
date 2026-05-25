@@ -276,13 +276,20 @@ async function startServer() {
       });
       
       if (!response.ok) {
-        throw new Error(`Auth failed with status ${response.status}`);
+        if (response.status === 401 || response.status === 403) {
+          throw new Error("Authentication failed. Please check your username and password.");
+        }
+        throw new Error(`Server returned status ${response.status}`);
       }
       
       const data = await response.json();
       res.json(data);
     } catch (e: any) {
-      res.status(401).json({ error: e.message });
+      if (e.message.includes('fetch failed') || e.cause) {
+         res.status(502).json({ error: `Cannot contact server at ${serverUrl}. Please check the server URL.` });
+      } else {
+         res.status(401).json({ error: e.message });
+      }
     }
   });
 

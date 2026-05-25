@@ -3,7 +3,7 @@ import {
   Inbox, Send, File, AlertCircle, Trash2, Menu, Search, 
   Settings, User, ChevronDown, Star, Archive, MoreVertical,
   Reply, Forward, X, Edit3, Mail, LogOut, Loader2, Server,
-  Calendar, Users, RefreshCw, Lock, Clock, Key, Shield, Plus, ExternalLink,
+  Calendar, Users, RefreshCw, Lock, Clock, Key, Shield, Plus, ExternalLink, Eye, EyeOff,
   Sparkles, Download, Upload, Bell, Check, MailCheck, Sun, Filter, ArrowLeft, Paperclip,
   ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile, Camera, Globe, Video, MapPin, Link, Copy, BookOpen, Webhook, Terminal
 } from "lucide-react";
@@ -621,6 +621,7 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState("https://mail.example.com");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
@@ -805,15 +806,21 @@ export default function App() {
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                   Password
                 </label>
-                <div className="mt-1">
+                <div className="mt-1 relative">
                   <input
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white rounded-xl py-3 px-3 border outline-none transition-colors"
+                    className="focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white rounded-xl py-3 pl-3 pr-10 border outline-none transition-colors"
                     placeholder="••••••••"
                   />
+                  <div 
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </div>
                 </div>
               </div>
 
