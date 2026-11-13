@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-async function generateSecurePayload(password, subject, body) {
+async function generateSecurePayload(password, subject, body, expiration = "1week", viewOnce = false) {
   // 1. Generate secure random IV and Salt
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
@@ -37,13 +37,17 @@ async function generateSecurePayload(password, subject, body) {
     encryptedPayload: Buffer.from(encrypted).toString('base64'),
     iv: Buffer.from(iv).toString('base64'),
     salt: Buffer.from(salt).toString('base64'),
-    expiration: "1week", 
-    viewOnce: false
+    expiration, 
+    viewOnce
   };
 
-  console.log("Ready to curl! JSON Payload: \n");
+  console.log("JSON Payload: \n");
   console.log(JSON.stringify(requestBody, null, 2));
 }
 
-// Run the script
-generateSecurePayload("sunil123", "Confidential API Test", "This payload will successfully decrypt on the frontend.");
+const args = process.argv.slice(2);
+if (args.length < 3) {
+  console.log("Usage: node generate-secure-payload.js <password> <subject> <body> [expiration] [viewOnce]");
+} else {
+  generateSecurePayload(args[0], args[1], args[2], args[3] || "1week", args[4] === "true");
+}

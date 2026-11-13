@@ -5,12 +5,12 @@ import {
   Reply, Forward, X, Edit3, Mail, LogOut, Loader2, Server,
   Calendar, Users, RefreshCw, Lock, Clock, Key, Shield, Plus, ExternalLink, Eye, EyeOff,
   Sparkles, Download, Upload, Bell, Check, MailCheck, Sun, Filter, ArrowLeft, Paperclip,
-  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile, Camera, Globe, Video, MapPin, Link, Copy, BookOpen, Webhook, Terminal, DownloadCloud
+  ChevronLeft, ChevronRight, Edit2, Save, Phone, Folder, FileEdit, ShieldAlert, Tag, LayoutTemplate, BarChart3, BellOff, Smile, Camera, Globe, Video, MapPin, Link, Copy, BookOpen, Webhook, Terminal, DownloadCloud, HardDrive, MessageSquare, CornerDownRight, CheckCircle2, XCircle, HelpCircle
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "./lib/utils";
 import { Toaster, toast } from 'sonner';
-import { Mailbox, Email, Identity, Contact, Event, Account } from "./lib/types";
+import { Mailbox, Email, Identity, Contact, Event, Account, Quota, Thread, EmailSearchFilter } from "./lib/types";
 import { JmapClient } from "./lib/jmap-client";
 import DOMPurify from 'dompurify';
 import { getTranslation } from "./lib/i18n";
@@ -19,6 +19,26 @@ import { RuleConditionType, RuleMatcher, RuleActionType, CustomRuleCondition, Cu
 
 // Use translation dictionary directly
 const t = getTranslation;
+
+function formatBytes(bytes?: number): string {
+  if (!bytes || bytes <= 0) return "0 MB";
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) {
+    return `${(mb / 1024).toFixed(1)} GB`;
+  }
+  return `${mb.toFixed(0)} MB`;
+}
+
+function safeFormatDate(dateStr?: string | null, formatStr = "MMM d, yyyy, h:mm a"): string {
+  if (!dateStr) return "Draft";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "Draft";
+  try {
+    return format(d, formatStr);
+  } catch {
+    return "Draft";
+  }
+}
 
 const iconMap: Record<string, React.ElementType> = {
   Inbox, Send, File, AlertCircle, Trash2, Folder, FileEdit, Archive, ShieldAlert, Tag, Users, Bell, LayoutTemplate, Mail, BarChart3
@@ -917,6 +937,13 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
   const [selectedMailbox, setSelectedMailbox] = useState<string>("");
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
+  const [quotas, setQuotas] = useState<Quota[]>([]);
+  const [threadEmails, setThreadEmails] = useState<Email[]>([]);
+  const [expandedThreadEmailIds, setExpandedThreadEmailIds] = useState<Record<string, boolean>>({});
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
+  const [isSearchingServer, setIsSearchingServer] = useState(false);
+  const [quickReplyBody, setQuickReplyBody] = useState("");
+  const [isSendingQuickReply, setIsSendingQuickReply] = useState(false);
   const [identities, setIdentities] = useState<Identity[]>([]);
   const [selectedIdentityId, setSelectedIdentityId] = useState<string>("");
   const [isAddingIdentity, setIsAddingIdentity] = useState(false);
@@ -1689,6 +1716,50 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     }
     return "";
   };
+
+  const searchDebounceRef = useRef<any>(null);
+  const isSearchActive = !!(searchQuery.trim() || advancedSearch.from || advancedSearch.to || advancedSearch.subject || advancedSearch.body || advancedSearch.after || advancedSearch.before);
+
+  useEffect(() => {
+    if (!credentials) return;
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
+    if (isSearchActive) {
+      searchDebounceRef.current = setTimeout(async () => {
+        setIsSearchingServer(true);
+        try {
+          const client = new JmapClient(credentials);
+          const filter: EmailSearchFilter = {
+            text: searchQuery.trim() || undefined,
+            from: advancedSearch.from || undefined,
+            to: advancedSearch.to || undefined,
+            subject: advancedSearch.subject || undefined,
+            body: advancedSearch.body || undefined,
+            after: advancedSearch.after || undefined,
+            before: advancedSearch.before || undefined,
+            hasAttachment: advancedSearch.hasAttachment ? true : undefined,
+            inMailbox: advancedSearch.mailboxId !== 'all' ? advancedSearch.mailboxId : (selectedMailbox || undefined)
+          };
+          const results = await client.getEmails(
+            filter.inMailbox || null, 
+            readEmailsPerPage, 
+            0, 
+            filter, 
+            !readDisableConvGrouping
+          );
+          setEmails(results);
+        } catch (err) {
+          console.warn("Server search query error:", err);
+        } finally {
+          setIsSearchingServer(false);
+        }
+      }, 350);
+    }
+
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchQuery, advancedSearch, credentials, readEmailsPerPage, readDisableConvGrouping, selectedMailbox, isSearchActive]);
 
   const filteredEmails = useMemo(() => emails.filter(email => {
     // 1. Advanced Search Filters
@@ -2911,6 +2982,10 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         setSelectedIdentityId(list[0].id);
       }
     }).catch(err => console.warn("Failed to fetch identities", err));
+
+    client.getQuotas().then(list => {
+      if (list && list.length > 0) setQuotas(list);
+    }).catch(err => console.warn("Failed to fetch quotas", err));
   }, [credentials]);
 
   const handleCreateIdentity = async () => {
@@ -2953,6 +3028,64 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
         }
       }
     );
+  };
+
+  const handleSendQuickReply = async (inReplyToEmail: Email) => {
+    if (!quickReplyBody.trim() || !credentials) return;
+    setIsSendingQuickReply(true);
+    try {
+      const client = new JmapClient(credentials);
+      const identity = identities.find(i => i.id === selectedIdentityId) || identities[0];
+      const replySubject = inReplyToEmail.subject.toLowerCase().startsWith('re:')
+        ? inReplyToEmail.subject
+        : `Re: ${inReplyToEmail.subject}`;
+
+      const replyTo = inReplyToEmail.replyTo?.[0]?.email || inReplyToEmail.from?.email;
+      if (!replyTo) throw new Error("No recipient address found");
+
+      await client.sendEmail(
+        [replyTo],
+        replySubject,
+        quickReplyBody,
+        undefined,
+        undefined,
+        identity?.id,
+        identity?.email,
+        undefined,
+        identity?.name,
+        [],
+        inReplyToEmail.id,
+        [...(inReplyToEmail.references || []), inReplyToEmail.id]
+      );
+
+      toast.success("Reply sent!");
+      setQuickReplyBody("");
+      if (inReplyToEmail.threadId) {
+        const { emails: refreshed } = await client.getThreadWithEmails(inReplyToEmail.threadId);
+        if (refreshed.length > 0) setThreadEmails(refreshed);
+      }
+    } catch (err: any) {
+      toast.error(`Failed to send reply: ${err.message}`);
+    } finally {
+      setIsSendingQuickReply(false);
+    }
+  };
+
+  const handleRsvp = async (eventTitle: string, status: "accepted" | "declined" | "tentative") => {
+    if (!credentials) return;
+    try {
+      const client = new JmapClient(credentials);
+      const cleanTitle = eventTitle.replace(/^(invite:\s*|invitation:\s*)/i, '').trim();
+      const matchingEvent = events.find(e => (e.title || "").toLowerCase().includes(cleanTitle.toLowerCase()));
+      if (matchingEvent) {
+        await client.rsvpEvent(matchingEvent.id, credentials.username, status);
+        toast.success(`Meeting invitation ${status}!`);
+      } else {
+        toast.success(`RSVP recorded as ${status}!`);
+      }
+    } catch (err: any) {
+      toast.error(`RSVP failed: ${err.message}`);
+    }
   };
 
   // Fetch Contacts
@@ -3182,7 +3315,55 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
     const client = new JmapClient(credentials);
     let debounceTimer: any = null;
     
-    const connected = client.connectWebSocket((changes) => {
+    const connected = client.connectWebSocket(async (changes) => {
+      let handledDelta = false;
+      if (changes.Email) {
+        try {
+          const delta = await client.syncEmails(selectedMailbox || undefined);
+          if (delta) {
+            setEmails(prev => {
+              let next = prev.filter(e => !delta.destroyed.includes(e.id));
+              if (delta.updated.length > 0) {
+                const updateMap = new Map(delta.updated.map(u => [u.id, u]));
+                next = next.map(e => updateMap.has(e.id) ? { ...e, ...updateMap.get(e.id)! } : e);
+              }
+              if (delta.created.length > 0) {
+                const existingIds = new Set(next.map(e => e.id));
+                const fresh = delta.created.filter(c => !existingIds.has(c.id));
+                next = [...fresh, ...next];
+              }
+              return next;
+            });
+            handledDelta = true;
+          }
+        } catch (e) {
+          console.warn("Email delta sync error:", e);
+        }
+      }
+
+      if (changes.Mailbox) {
+        try {
+          const mDelta = await client.syncMailboxes();
+          if (mDelta) {
+            setMailboxes(prev => {
+              let next = prev.filter(m => !mDelta.destroyed.includes(m.id));
+              if (mDelta.updated.length > 0) {
+                const uMap = new Map(mDelta.updated.map(u => [u.id, u]));
+                next = next.map(m => uMap.has(m.id) ? { ...m, ...uMap.get(m.id)! } : m);
+              }
+              if (mDelta.created.length > 0) {
+                const existing = new Set(next.map(m => m.id));
+                next = [...next, ...mDelta.created.filter(c => !existing.has(c.id))];
+              }
+              return next;
+            });
+          }
+        } catch (e) {
+          console.warn("Mailbox delta sync error:", e);
+        }
+      }
+
+      if (handledDelta) return;
       // Whenever we get a StateChange from the server, we seamlessly fetch updates
       // This eliminates the need for manual refreshing
       
@@ -3243,7 +3424,26 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
       return;
     }
 
-    // 2. Open Viewer
+    // 2. Open Viewer & Load Conversation Thread (RFC 8621 §3)
+    if (email.threadId && !readDisableConvGrouping) {
+      setIsLoadingThread(true);
+      const client = new JmapClient(credentials);
+      client.getThreadWithEmails(email.threadId).then(({ emails: tEmails }) => {
+        if (tEmails.length > 0) {
+          setThreadEmails(tEmails);
+          setExpandedThreadEmailIds({ [email.id]: true });
+        } else {
+          setThreadEmails([email]);
+        }
+      }).catch(err => {
+        console.warn("Failed to fetch thread emails", err);
+        setThreadEmails([email]);
+      }).finally(() => {
+        setIsLoadingThread(false);
+      });
+    } else {
+      setThreadEmails([email]);
+    }
     setSelectedEmail(email);
 
     // 3. Mark as Read Logic
@@ -3980,6 +4180,33 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
           </ul>
         </nav>
 
+        {quotas.length > 0 && (
+          <div className="px-4 py-3 mx-3 mb-2 bg-slate-50 dark:bg-[#11131f] rounded-2xl border border-slate-100 dark:border-slate-800/60 shadow-sm">
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+              <span className="flex items-center gap-1.5">
+                <HardDrive className="w-3.5 h-3.5 text-indigo-500" />
+                Storage
+              </span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                {formatBytes(quotas[0].used)} / {formatBytes(quotas[0].limit)}
+              </span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+              <div 
+                className={cn(
+                  "h-full rounded-full transition-all duration-500",
+                  (quotas[0].used / (quotas[0].limit || 1)) > 0.9 
+                    ? "bg-red-500" 
+                    : (quotas[0].used / (quotas[0].limit || 1)) > 0.7 
+                      ? "bg-amber-500" 
+                      : "bg-indigo-600"
+                )}
+                style={{ width: `${Math.min(100, Math.max(3, Math.round((quotas[0].used / (quotas[0].limit || 1)) * 100)))}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="p-4 border-t border-slate-200 dark:border-slate-800/50">
           <div className="flex items-center gap-3 w-full px-2 py-2 text-sm font-medium rounded-lg">
             <div className={cn("w-8 h-8 rounded-full flex items-center justify-center text-white shrink-0 font-bold", getAccountColor(credentials.username))}>
@@ -4040,6 +4267,9 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                 className="w-full pl-11 pr-20 py-2.5 bg-slate-100 dark:bg-slate-900 border border-transparent dark:border-slate-800 focus:bg-white dark:focus:bg-slate-800 focus:border-transparent focus:ring-4 focus:ring-indigo-500/10 dark:focus:ring-indigo-500/20 rounded-full text-base outline-none transition-all dark:text-white shadow-sm"
               />
               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center pr-1">
+                {isSearchingServer && activeApp === 'mail' && (
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-500 mr-1" />
+                )}
                 {(activeApp === 'contacts' ? contactSearchQuery : activeApp === 'calendar' ? eventSearchQuery : searchQuery) && (
                   <button 
                     onClick={() => {
@@ -4937,6 +5167,150 @@ function MainApp({ credentials, accounts, currentAccountIndex, onLogout, onSwitc
                           </div>
                         )}
                         
+                        {/* RFC 8984 & JMAP Calendar Meeting RSVP Card */}
+                        {selectedEmail.attachments?.some((a: any) => a.type?.includes('calendar') || a.name?.endsWith('.ics')) && (
+                          <div className="mb-6 p-4 bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-950/40 dark:to-purple-950/30 rounded-2xl border border-indigo-100 dark:border-indigo-800/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-md shadow-indigo-600/20">
+                                <Calendar className="w-5 h-5" />
+                              </div>
+                              <div>
+                                <div className="font-bold text-slate-900 dark:text-white text-sm">
+                                  Meeting Invitation: {selectedEmail.subject.replace(/^(invite:\s*|invitation:\s*)/i, '')}
+                                </div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                  Calendar invite attached to this message
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => handleRsvp(selectedEmail.subject, 'accepted')}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
+                              >
+                                <CheckCircle2 className="w-4 h-4" /> Accept
+                              </button>
+                              <button 
+                                onClick={() => handleRsvp(selectedEmail.subject, 'tentative')}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
+                              >
+                                <HelpCircle className="w-4 h-4" /> Maybe
+                              </button>
+                              <button 
+                                onClick={() => handleRsvp(selectedEmail.subject, 'declined')}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
+                              >
+                                <XCircle className="w-4 h-4" /> Decline
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* RFC 8621 §3: Conversation Thread View */}
+                        {threadEmails.length > 1 && (
+                          <div className="mb-6 space-y-4">
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                <MessageSquare className="w-4 h-4 text-indigo-500" />
+                                <span>Conversation ({threadEmails.length} messages)</span>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const allExp = threadEmails.every(e => expandedThreadEmailIds[e.id]);
+                                  if (allExp) {
+                                    setExpandedThreadEmailIds({ [selectedEmail.id]: true });
+                                  } else {
+                                    const all: Record<string, boolean> = {};
+                                    threadEmails.forEach(e => all[e.id] = true);
+                                    setExpandedThreadEmailIds(all);
+                                  }
+                                }}
+                                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-semibold"
+                              >
+                                {threadEmails.every(e => expandedThreadEmailIds[e.id]) ? "Collapse All" : "Expand All"}
+                              </button>
+                            </div>
+
+                            {threadEmails.map((msg, index) => {
+                              const isExpanded = expandedThreadEmailIds[msg.id] ?? (index === threadEmails.length - 1 || msg.id === selectedEmail.id);
+                              return (
+                                <div key={msg.id} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0c0d14] overflow-hidden shadow-sm transition-all">
+                                  <div 
+                                    onClick={() => setExpandedThreadEmailIds(prev => ({ ...prev, [msg.id]: !isExpanded }))}
+                                    className="p-3.5 flex items-center justify-between cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors"
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div className={cn(
+                                        "w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-sm",
+                                        getAccountColor(msg.from.email)
+                                      )}>
+                                        {(msg.from.name || msg.from.email || "?").charAt(0).toUpperCase()}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                                          {msg.from.name || msg.from.email}
+                                        </div>
+                                        {!isExpanded && (
+                                          <p className="text-xs text-slate-400 truncate max-w-md mt-0.5">
+                                            {msg.preview || (msg.body ? msg.body.substring(0, 80) : "")}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-3 shrink-0">
+                                      <span className="text-[11px] text-slate-400 font-medium">
+                                        {safeFormatDate(msg.date)}
+                                      </span>
+                                      <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform duration-200", isExpanded && "rotate-180")} />
+                                    </div>
+                                  </div>
+
+                                  {isExpanded && (
+                                    <div className="px-5 pb-5 pt-2 border-t border-slate-100 dark:border-slate-800/60">
+                                      <div className="text-xs text-slate-400 mb-3">
+                                        To: {msg.to.map(t => t.name || t.email).join(', ')}
+                                      </div>
+                                      <div className="overflow-x-auto max-w-none">
+                                        <HtmlEmailViewer 
+                                          htmlContent={DOMPurify.sanitize(msg.body || "<em>No content</em>", { WHOLE_DOCUMENT: true, ADD_TAGS: ['style', 'head', 'html', 'meta', 'title', 'body'], ADD_ATTR: ['target', 'style', 'class'] })} 
+                                          attachments={msg.attachments}
+                                          credentials={credentials}
+                                          isDarkMode={isDarkMode}
+                                        />
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+
+                            {/* Quick Reply in Thread */}
+                            <div className="mt-4 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#11131f]">
+                              <div className="flex items-center gap-2 mb-2 text-xs font-bold text-slate-600 dark:text-slate-400">
+                                <CornerDownRight className="w-4 h-4 text-indigo-500" />
+                                Quick Reply in Thread
+                              </div>
+                              <textarea
+                                value={quickReplyBody}
+                                onChange={(e) => setQuickReplyBody(e.target.value)}
+                                placeholder="Write a reply to the conversation..."
+                                rows={3}
+                                className="w-full p-3 bg-white dark:bg-[#0c0d14] border border-slate-200 dark:border-slate-800 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none text-slate-900 dark:text-white"
+                              />
+                              <div className="flex items-center justify-end mt-2">
+                                <button
+                                  onClick={() => handleSendQuickReply(selectedEmail)}
+                                  disabled={!quickReplyBody.trim() || isSendingQuickReply}
+                                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow transition-all"
+                                >
+                                  {isSendingQuickReply ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                                  Send Reply
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
                         <div className="mb-8">
                           <div className="flex items-start gap-3">
                             <div className={cn(

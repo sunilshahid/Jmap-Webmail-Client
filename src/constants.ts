@@ -23,11 +23,11 @@ export interface CustomRule {
 }
 
 export const EMAIL_TAGS = [
-  { keyword: '$label:red', name: '', color: 'bg-red-500' },
-  { keyword: '$label:orange', name: '', color: 'bg-orange-500' },
-  { keyword: '$label:yellow', name: '', color: 'bg-yellow-500' },
-  { keyword: '$label:green', name: '', color: 'bg-green-500' },
-  { keyword: '$label:blue', name: '', color: 'bg-blue-500' },
-  { keyword: '$label:purple', name: '', color: 'bg-purple-500' },
-  { keyword: '$label:pink', name: '', color: 'bg-pink-500' }
+  { keyword: '$label:red', name: 'Red', color: 'bg-red-500' },
+  { keyword: '$label:orange', name: 'Orange', color: 'bg-orange-500' },
+  { keyword: '$label:yellow', name: 'Yellow', color: 'bg-yellow-500' },
+  { keyword: '$label:green', name: 'Green', color: 'bg-green-500' },
+  { keyword: '$label:blue', name: 'Blue', color: 'bg-blue-500' },
+  { keyword: '$label:purple', name: 'Purple', color: 'bg-purple-500' },
+  { keyword: '$label:pink', name: 'Pink', color: 'bg-pink-500' }
 ];
